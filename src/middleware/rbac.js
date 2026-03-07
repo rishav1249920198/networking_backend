@@ -1,6 +1,6 @@
 /**
  * Role-Based Access Control middleware factory
- * Usage: requireRole('super_admin', 'centre_admin')
+ * Usage: requireRole('super_admin', 'centre_admin', 'co-admin')
  */
 const requireRole = (...allowedRoles) => {
   return (req, res, next) => {

@@ -24,10 +24,16 @@ class AdmissionService {
     // 2. Validate Duplicate Admission
     let dupQuery = '';
     let dupParams = [];
-    if (admission_mode === 'online') {
-      dupQuery = `SELECT id FROM admissions WHERE student_id = $1 AND course_id = $2 AND status IN ('pending', 'approved')`;
-      dupParams = [student_id, course_id];
+    if (student_id) {
+      if (admission_mode === 'online') {
+        dupQuery = `SELECT id FROM admissions WHERE student_id = $1 AND course_id = $2 AND status IN ('pending', 'approved')`;
+        dupParams = [student_id, course_id];
+      } else {
+        dupQuery = `SELECT id FROM admissions WHERE student_email = $1 AND course_id = $2 AND status IN ('pending', 'approved')`;
+        dupParams = [student_email, course_id];
+      }
     } else {
+      // Public admission (no student_id yet)
       dupQuery = `SELECT id FROM admissions WHERE student_email = $1 AND course_id = $2 AND status IN ('pending', 'approved')`;
       dupParams = [student_email, course_id];
     }
@@ -56,9 +62,11 @@ class AdmissionService {
       }
 
       if (admission_mode === 'online') {
-        const validation = await validateReferral(referredByUserId, student_id);
-        if (!validation.valid) {
-          throw new Error(validation.message);
+        if (student_id) {
+          const validation = await validateReferral(referredByUserId, student_id);
+          if (!validation.valid) {
+            throw new Error(validation.message);
+          }
         }
       }
     }

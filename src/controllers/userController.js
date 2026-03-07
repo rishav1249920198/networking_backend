@@ -122,4 +122,74 @@ const getPendingReferrals = async (req, res) => {
   }
 };
 
-module.exports = { getStudents, getPendingReferrals };
+// GET /api/users
+const getAllUsers = async (req, res) => {
+  const { page = 1, limit = 50 } = req.query;
+  const offset = (page - 1) * limit;
+
+  try {
+    const query = `
+      SELECT u.id, u.system_id, u.full_name, u.email, u.mobile, ro.name as role, u.created_at
+      FROM users u
+      JOIN roles ro ON ro.id = u.role_id
+      ORDER BY u.created_at DESC
+      LIMIT $1 OFFSET $2
+    `;
+    const countQuery = `SELECT COUNT(*) FROM users`;
+    const result = await pool.query(query, [limit, offset]);
+    const countResult = await pool.query(countQuery);
+
+    return res.json({
+      success: true,
+      data: result.rows,
+      pagination: { page: parseInt(page), limit: parseInt(limit), total: parseInt(countResult.rows[0].count) }
+    });
+  } catch (err) {
+    console.error('Fetch All Users Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch users.' });
+  }
+};
+
+// PUT /api/users/:id/role
+const updateUserRole = async (req, res) => {
+  const { id } = req.params;
+  const { role } = req.body; // 'student' or 'co-admin'
+  if (!['student', 'co-admin'].includes(role)) {
+    return res.status(400).json({ success: false, message: 'Invalid role assignment.' });
+  }
+
+  try {
+    const roleRes = await pool.query(`SELECT id FROM roles WHERE name = $1`, [role]);
+    if (roleRes.rowCount === 0) return res.status(400).json({ success: false, message: 'Role not found' });
+    const roleId = roleRes.rows[0].id;
+
+    const result = await pool.query(`UPDATE users SET role_id = $1, updated_at = NOW() WHERE id = $2 RETURNING id`, [roleId, id]);
+    if (result.rowCount === 0) return res.status(404).json({ success: false, message: 'User not found.' });
+    return res.json({ success: true, message: \`User successfully updated to \${role}\` });
+  } catch (err) {
+    console.error('Update User Role Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to update user role.' });
+  }
+};
+
+// DELETE /api/users/:id
+const deleteUser = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const checkUser = await pool.query(`SELECT ro.name as role FROM users u JOIN roles ro ON ro.id = u.role_id WHERE u.id = $1`, [id]);
+    if (checkUser.rowCount === 0) return res.status(404).json({ success: false, message: 'User not found.' });
+    
+    // Prevent deletion of higher admins
+    if (['super_admin', 'admin', 'centre_admin'].includes(checkUser.rows[0].role)) {
+      return res.status(403).json({ success: false, message: 'Cannot delete an administrator account.' });
+    }
+
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    return res.json({ success: true, message: 'User successfully deleted.' });
+  } catch (err) {
+    console.error('Delete User Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to delete user.' });
+  }
+};
+
+module.exports = { getStudents, getPendingReferrals, getAllUsers, updateUserRole, deleteUser };

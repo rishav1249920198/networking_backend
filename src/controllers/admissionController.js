@@ -27,6 +27,35 @@ const createOnlineAdmission = async (req, res) => {
   }
 };
 
+// POST /api/admissions/public (Public Route)
+const createPublicAdmission = async (req, res) => {
+  try {
+    // Attempt logic lookup for CentreID (Defaults to primary IGCIM Centre if unmapped)
+    const centreRes = await pool.query('SELECT id FROM centres WHERE is_active = TRUE ORDER BY created_at ASC LIMIT 1');
+    if (centreRes.rowCount === 0) return res.status(500).json({ success: false, message: 'No active centres found for public admission.' });
+
+    const admission = await AdmissionService.createAdmission({
+      ...req.body,
+      student_id: null, // No auth context implies pending account status vs physical student binding
+      centre_id: centreRes.rows[0].id,
+      payment_proof_path: req.file ? req.file.path : null,
+      admission_mode: 'online'
+    });
+    
+    return res.status(201).json({
+      success: true,
+      message: 'Admission submitted successfully. We will contact you soon.',
+      data: admission,
+    });
+  } catch (err) {
+    if (err.message && !err.message.includes('SQL')) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+    console.error('Public admission error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to submit public admission.' });
+  }
+};
+
 // POST /api/admissions/offline  (Staff only)
 const createOfflineAdmission = async (req, res) => {
   try {
