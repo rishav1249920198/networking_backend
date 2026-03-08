@@ -314,6 +314,7 @@ const adminEnrollAndApprove = async (req, res) => {
 
 module.exports = {
   createOnlineAdmission,
+  createPublicAdmission,
   createOfflineAdmission,
   approveAdmission,
   rejectAdmission,

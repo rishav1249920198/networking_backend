@@ -59,7 +59,7 @@ const getStudentDashboard = async (req, res) => {
 // GET /api/dashboard/admin
 const getAdminDashboard = async (req, res) => {
   const { centre_id, role } = req.user;
-  const centreFilter = role !== 'super_admin' ? `AND a.centre_id = '${centre_id}'` : '';
+  const centreFilter = role !== 'super_admin' ? ` AND a.centre_id = '${centre_id}'` : '';
 
   try {
     const [admStats, commStats, userStats, recentAdm] = await Promise.all([
@@ -76,7 +76,7 @@ const getAdminDashboard = async (req, res) => {
           COALESCE(SUM(amount), 0) AS total_commissions,
           COUNT(*) AS total_count,
           COUNT(CASE WHEN status='pending' THEN 1 END) AS pending_count
-         FROM commissions c WHERE 1=1 ${centreFilter.replace('a.', 'c.')}`
+         FROM commissions c WHERE 1=1 ${centreFilter.replace(/a\./g, 'c.')}`
       ),
       pool.query(
         `SELECT COUNT(*) AS total_students
@@ -101,7 +101,7 @@ const getAdminDashboard = async (req, res) => {
               COUNT(*) AS count
        FROM commissions
        WHERE created_at >= NOW() - INTERVAL '6 months'
-       ${centreFilter.replace('a.', '').replace('centre_id', 'centre_id')}
+       ${centreFilter.replace(/a\./g, '')}
        GROUP BY month, month_date ORDER BY month_date`
     );
 

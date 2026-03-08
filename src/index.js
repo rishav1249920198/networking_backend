@@ -72,6 +72,7 @@ app.use('/api/commissions', commissionRoutes);
 app.use('/api/referrals', referralRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/admin', require('./routes/admin'));
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -4,8 +4,7 @@ const pool = require('../config/db');
 const listCourses = async (req, res) => {
   const { category, centre_id } = req.query;
   const user = req.user;
-  const isAdmin = ['super_admin', 'centre_admin'].includes(user?.role);
-
+  const isAdmin = ['super_admin', 'centre_admin', 'admin', 'co-admin'].includes(user?.role);
   try {
     // Admins see ALL courses (active + inactive). Students/staff see only active.
     let where = isAdmin ? 'WHERE 1=1' : 'WHERE c.is_active = TRUE';

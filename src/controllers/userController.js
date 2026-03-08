@@ -3,7 +3,7 @@ const pool = require('../config/db');
 // GET /api/users/students
 const getStudents = async (req, res) => {
   const { centre_id, role } = req.user;
-  const centreFilter = role !== 'super_admin' ? `AND u.centre_id = '${centre_id}'` : '';
+  const centreFilter = role !== 'super_admin' ? ` AND u.centre_id = '${centre_id}'` : '';
 
   const { page = 1, limit = 20 } = req.query;
   const offset = (page - 1) * limit;
@@ -57,7 +57,7 @@ const getStudents = async (req, res) => {
 // Students who registered via a referral code but have NO approved admission yet
 const getPendingReferrals = async (req, res) => {
   const { centre_id, role } = req.user;
-  const centreFilter = role !== 'super_admin' ? `AND u.centre_id = '${centre_id}'` : '';
+  const centreFilter = role !== 'super_admin' ? ` AND u.centre_id = '${centre_id}'` : '';
 
   const { page = 1, limit = 20 } = req.query;
   const offset = (page - 1) * limit;
