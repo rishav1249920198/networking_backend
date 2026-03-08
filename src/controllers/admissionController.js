@@ -2,6 +2,9 @@ const pool = require('../config/db');
 const { validateReferral } = require('../services/referralValidator');
 const { generateCommission } = require('../services/commissionEngine');
 const AdmissionService = require('../services/AdmissionService');
+const { sendTransactionalEmail } = require('../services/emailService');
+const { generateOTP, generateSystemId, generateReferralCode } = require('../utils/generators');
+const bcrypt = require('bcryptjs');
 
 // POST /api/admissions/online
 const createOnlineAdmission = async (req, res) => {
@@ -27,7 +30,7 @@ const createOnlineAdmission = async (req, res) => {
   }
 };
 
-// POST /api/admissions/public (Public Route)
+// POST /api/admissions/public (Public Route) - LEGACY
 const createPublicAdmission = async (req, res) => {
   try {
     // Attempt logic lookup for CentreID (Defaults to primary IGCIM Centre if unmapped)
@@ -53,6 +56,181 @@ const createPublicAdmission = async (req, res) => {
     }
     console.error('Public admission error:', err);
     return res.status(500).json({ success: false, message: 'Failed to submit public admission.' });
+  }
+};
+
+// POST /api/admissions/send-otp
+const sendAdmissionOTP = async (req, res) => {
+  const { student_name, student_email, student_mobile } = req.body;
+  if (!student_email) return res.status(400).json({ success: false, message: 'Email is required' });
+
+  // Generate OTP
+  const otp = generateOTP();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  try {
+    // Store OTP in database
+    await pool.query(
+      `INSERT INTO admission_otps (email, otp, expires_at) VALUES ($1, $2, $3)`,
+      [student_email, otp, expiresAt]
+    );
+
+    // Send Email
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+        <p>Dear ${student_name},</p>
+        <p>Thank you for choosing IGCIM Computer Centre.</p>
+        <p>To continue your admission process, please verify your email address using the OTP below:</p>
+        <div style="text-align: center; background: #f4f4f4; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <h2 style="color: #0A2463; letter-spacing: 5px; margin: 0;">${otp}</h2>
+        </div>
+        <p>This OTP is valid for 10 minutes.</p>
+        <p>If you did not request this verification, please ignore this email.</p>
+        <p>Best regards<br>IGCIM Computer Centre</p>
+      </div>
+    `;
+
+    await sendTransactionalEmail(student_email, 'Email Verification for Admission', emailHtml);
+    
+    // Log OTP for development
+    console.log(`\n📧 [ADMISSION OTP] ${student_email}: ${otp}\n`);
+
+    return res.json({ success: true, message: 'OTP sent successfully to your email.' });
+  } catch (err) {
+    console.error('Send Admission OTP error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to send OTP.' });
+  }
+};
+
+// POST /api/admissions/verify-and-admit
+const verifyAndCreateAdmission = async (req, res) => {
+  const { student_email, student_name, student_mobile, otp, course_id, payment_mode, payment_reference, referral_code, address } = req.body;
+  
+  if (!otp || !student_email) {
+    return res.status(400).json({ success: false, message: 'Email and OTP are required' });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // 1. Verify OTP
+    const otpResult = await client.query(
+      `SELECT id FROM admission_otps WHERE email = $1 AND otp = $2 AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1`,
+      [student_email, otp]
+    );
+
+    if (otpResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: 'Invalid or expired OTP.' });
+    }
+
+    // 2. Identify Centre
+    const centreRes = await client.query('SELECT id FROM centres WHERE is_active = TRUE ORDER BY created_at ASC LIMIT 1');
+    const defaultCentreId = centreRes.rows[0].id;
+
+    // 3. User Auto Creation (Replicate AdmissionService Logic but intercept credentials)
+    let student_id;
+    let generatedPassword = null;
+    let generatedRefCode = null;
+
+    const userCheck = await client.query(`SELECT id FROM users WHERE email = $1`, [student_email]);
+    if (userCheck.rows.length > 0) {
+      student_id = userCheck.rows[0].id;
+    } else {
+      const roleRes = await client.query(`SELECT id FROM roles WHERE name = 'student'`);
+      const countRes = await client.query(`SELECT COUNT(*) FROM users`);
+      const sysId = generateSystemId('IGCIM', parseInt(countRes.rows[0].count) + 1);
+      
+      const random4Digits = Math.floor(1000 + Math.random() * 9000);
+      const emailPrefix = student_email.split('@')[0];
+      generatedPassword = `${emailPrefix}@${random4Digits}`; // e.g. rishav@4831
+      
+      const passHash = await bcrypt.hash(generatedPassword, 10);
+      
+      let unique = false;
+      while(!unique) {
+        generatedRefCode = `IGCIM-REF-${Math.floor(100000 + Math.random() * 900000)}`;
+        const check = await client.query(`SELECT id FROM users WHERE referral_code = $1`, [generatedRefCode]);
+        if (check.rows.length === 0) unique = true;
+      }
+
+      const newUser = await client.query(
+        `INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile, password_hash, referral_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [sysId, defaultCentreId, roleRes.rows[0].id, student_name, student_email, student_mobile, passHash, generatedRefCode]
+      );
+      student_id = newUser.rows[0].id;
+    }
+
+    // 4. Create Admission using AdmissionService
+    // We pass student_id so AdmissionService doesn't re-create the user
+    try {
+        await AdmissionService.createAdmission({
+            ...req.body,
+            student_id,
+            centre_id: defaultCentreId,
+            payment_proof_path: req.file ? req.file.path : null, // Assuming payment_receipt from verify-and-admit router maps to file
+            admission_mode: 'online',
+            dbClient: client
+        });
+    } catch(err) {
+        throw new Error(err.message); // Cascade throw
+    }
+
+    // 5. Delete OTP from DB to make it single-use
+    await client.query(`DELETE FROM admission_otps WHERE id = $1`, [otpResult.rows[0].id]);
+
+    await client.query('COMMIT');
+
+    // 6. Send Admission Success Email (Post-Commit)
+    if (generatedPassword && generatedRefCode) {
+        const website_url = process.env.APP_URL || 'http://localhost:5173/login';
+        const successEmailHtml = `
+          <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+            <p>Dear ${student_name},</p>
+            <p>Congratulations! Your admission at IGCIM Computer Centre has been successfully completed.</p>
+            <p>You can now log in to our student portal using the credentials below.</p>
+            
+            <h3 style="border-bottom: 2px solid #0A2463; padding-bottom: 5px; margin-top: 25px;">Login Details</h3>
+            <p><strong>Email (User ID):</strong> ${student_email}</p>
+            <p><strong>Password:</strong> ${generatedPassword}</p>
+            
+            <h3 style="border-bottom: 2px solid #0A2463; padding-bottom: 5px; margin-top: 25px;">Your Referral ID</h3>
+            <div style="background: #e2e8f0; padding: 15px; border-left: 4px solid #00B4D8; border-radius: 4px; margin: 15px 0;">
+                <strong style="color: #0A2463; font-size: 1.1em;">${generatedRefCode}</strong>
+            </div>
+            <p>You can use this referral ID to invite other students and earn commissions.</p>
+            
+            <p style="margin-top: 25px; color: #64748b;"><em>For security purposes, we recommend changing your password after your first login.</em></p>
+            <p style="color: #64748b;"><em>If you need to reset your password later, you can do so using the email OTP verification process.</em></p>
+            
+            <p style="margin-top: 25px;"><a href="${website_url}" style="background: #0A2463; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Login Here</a></p>
+            
+            <p style="margin-top: 30px;">Welcome to IGCIM Computer Centre.</p>
+            <p>Best regards<br>IGCIM Computer Centre</p>
+          </div>
+        `;
+        // Send email asynchronously without blocking the response
+        sendTransactionalEmail(student_email, 'Your Admission is Successfully Completed', successEmailHtml).catch(e => console.error("Success Email Error:", e));
+    }
+
+
+    return res.status(201).json({
+      success: true,
+      message: 'Admission submitted and verified successfully.',
+    });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.message && !err.message.includes('SQL')) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+    console.error('Verify and Admit error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to process admission.' });
+  } finally {
+    client.release();
   }
 };
 
@@ -320,4 +498,6 @@ module.exports = {
   rejectAdmission,
   listAdmissions,
   adminEnrollAndApprove,
+  sendAdmissionOTP,
+  verifyAndCreateAdmission
 };

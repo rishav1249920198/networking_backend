@@ -1,8 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const { handleUpload } = require('../middleware/upload');
-const { createOnlineAdmission, createOfflineAdmission, approveAdmission, rejectAdmission, listAdmissions, adminEnrollAndApprove, createPublicAdmission } = require('../controllers/admissionController');
 const { authenticate, requireRole, requireCoAdminOrAdmin } = require('../middleware/auth');
+const {
+  createOnlineAdmission,
+  createPublicAdmission,
+  createOfflineAdmission,
+  approveAdmission,
+  rejectAdmission,
+  listAdmissions,
+  adminEnrollAndApprove,
+  sendAdmissionOTP,
+  verifyAndCreateAdmission
+} = require('../controllers/admissionController');
+
+router.post('/send-otp', sendAdmissionOTP);
+router.post('/verify-and-admit', handleUpload, verifyAndCreateAdmission);
 
 router.post('/public', handleUpload, createPublicAdmission);
 router.post('/online', authenticate, requireRole('student', 'co-admin'), handleUpload, createOnlineAdmission);

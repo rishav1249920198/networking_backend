@@ -11,10 +11,10 @@ class AdmissionService {
   static async createAdmission({
     centre_id, course_id, student_id, student_name, student_mobile, student_email,
     referral_code, payment_mode, payment_reference, payment_proof_path,
-    admission_mode, staff_id = null, notes = null
+    admission_mode, staff_id = null, notes = null, dbClient = pool
   }) {
     // 1. Get Course
-    const courseResult = await pool.query(
+    const courseResult = await dbClient.query(
       `SELECT id, fee, commission_percent, is_active FROM courses WHERE id = $1 AND centre_id = $2`,
       [course_id, centre_id]
     );
@@ -25,12 +25,12 @@ class AdmissionService {
 
     // 2. Auto-Create User if Missing (Public / Offline)
     if (!student_id && student_email && student_mobile) {
-      const userCheck = await pool.query(`SELECT id FROM users WHERE email = $1 OR mobile = $2`, [student_email, student_mobile]);
+      const userCheck = await dbClient.query(`SELECT id FROM users WHERE email = $1 OR mobile = $2`, [student_email, student_mobile]);
       if (userCheck.rows.length > 0) {
          student_id = userCheck.rows[0].id;
       } else {
-         const roleRes = await pool.query(`SELECT id FROM roles WHERE name = 'student'`);
-         const countRes = await pool.query(`SELECT COUNT(*) FROM users`);
+         const roleRes = await dbClient.query(`SELECT id FROM roles WHERE name = 'student'`);
+         const countRes = await dbClient.query(`SELECT COUNT(*) FROM users`);
          const sysId = generateSystemId('IGCIM', parseInt(countRes.rows[0].count) + 1);
          const passHash = await bcrypt.hash(student_mobile.toString(), 10);
          
@@ -38,11 +38,11 @@ class AdmissionService {
          let unique = false;
          while(!unique) {
            newRefCode = generateReferralCode('IGCIM');
-           const check = await pool.query(`SELECT id FROM users WHERE referral_code = $1`, [newRefCode]);
+           const check = await dbClient.query(`SELECT id FROM users WHERE referral_code = $1`, [newRefCode]);
            if (check.rows.length === 0) unique = true;
          }
 
-         const newUser = await pool.query(
+         const newUser = await dbClient.query(
            `INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile, password_hash, referral_code)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
            [sysId, centre_id, roleRes.rows[0].id, student_name, student_email, student_mobile, passHash, newRefCode]
@@ -69,7 +69,7 @@ class AdmissionService {
     }
 
     if (dupParams[0]) {
-      const dupCheck = await pool.query(dupQuery, dupParams);
+      const dupCheck = await dbClient.query(dupQuery, dupParams);
       if (dupCheck.rows.length > 0) {
         throw new Error('An active or pending admission for this course already exists.');
       }
@@ -78,7 +78,7 @@ class AdmissionService {
     // 3. Process Referral Code
     let referredByUserId = null;
     if (referral_code) {
-      const refResult = await pool.query(
+      const refResult = await dbClient.query(
         `SELECT id FROM users WHERE referral_code = $1 AND is_active = TRUE`,
         [referral_code.toUpperCase()]
       );
@@ -103,7 +103,7 @@ class AdmissionService {
 
     // Link referred_by to user table if missing
     if (referredByUserId && student_id) {
-       await pool.query(
+       await dbClient.query(
          `UPDATE users SET referred_by = $1 WHERE id = $2 AND referred_by IS NULL`,
          [referredByUserId, student_id]
        );
@@ -126,7 +126,7 @@ class AdmissionService {
       payment_proof_path, payment_mode, payment_reference, staff_id, notes
     ];
 
-    const admResult = await pool.query(insertSQL, insertParams);
+    const admResult = await dbClient.query(insertSQL, insertParams);
     return admResult.rows[0];
   }
 }

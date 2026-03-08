@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { sendTransactionalEmail } = require('../services/emailService');
 
 // GET /api/commissions  (Student sees own; Admin sees centre; SuperAdmin sees all)
 const listCommissions = async (req, res) => {
@@ -134,6 +135,27 @@ const requestWithdrawal = async (req, res) => {
       [student_id, centre_id, amount, upi_id, bank_account, bank_ifsc, bank_name]
     );
 
+    // Send Withdrawal Request Email
+    try {
+      const studentRes = await pool.query('SELECT email, full_name FROM users WHERE id = $1', [student_id]);
+      if (studentRes.rows.length > 0) {
+        const student = studentRes.rows[0];
+        const emailHtml = `
+          <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+            <p>Dear ${student.full_name},</p>
+            <p>We have successfully received your withdrawal request for ₹${amount}.</p>
+            <p>Our team will review your request and process it shortly.</p>
+            <p>You will receive another email once the withdrawal has been confirmed.</p>
+            <p>Thank you for your patience.</p>
+            <p>Best regards<br>IGCIM Computer Centre</p>
+          </div>
+        `;
+        sendTransactionalEmail(student.email, 'Withdrawal Request Received', emailHtml).catch(e => console.error(e));
+      }
+    } catch (e) {
+      console.error("Failed to fetch student for withdrawal email:", e);
+    }
+
     return res.status(201).json({
       success: true,
       message: 'Withdrawal request submitted.',
@@ -214,6 +236,30 @@ const updateWithdrawalStatus = async (req, res) => {
 
     if (wRes.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Withdrawal request not found.' });
+    }
+
+    // Send Approval Email
+    if (status === 'approved') {
+        try {
+          const { student_id, amount } = wRes.rows[0];
+          const studentRes = await pool.query('SELECT email, full_name FROM users WHERE id = $1', [student_id]);
+          if (studentRes.rows.length > 0) {
+            const student = studentRes.rows[0];
+            const emailHtml = `
+              <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+                <p>Dear ${student.full_name},</p>
+                <p>Your withdrawal request for ₹${amount} has been successfully approved by the administration of IGCIM Computer Centre.</p>
+                <p>The withdrawal amount will be transferred to your registered UPI ID within 24 hours.</p>
+                <p>If the amount is not received within this timeframe, please feel free to contact our support team.</p>
+                <p>Thank you for being part of IGCIM Computer Centre.</p>
+                <p>Best regards<br>IGCIM Computer Centre</p>
+              </div>
+            `;
+            sendTransactionalEmail(student.email, 'Withdrawal Request Approved', emailHtml).catch(e => console.error(e));
+          }
+        } catch (e) {
+            console.error("Failed to fetch student for withdrawal approval email:", e);
+        }
     }
 
     return res.json({ success: true, message: `Withdrawal request marked as ${status}.` });
