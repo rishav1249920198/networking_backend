@@ -59,7 +59,7 @@ const createPublicAdmission = async (req, res) => {
   }
 };
 
-// POST /api/admissions/send-otp
+// POST /api/admissions/request-otp
 const sendAdmissionOTP = async (req, res) => {
   const { student_name, student_email, student_mobile } = req.body;
   if (!student_email) return res.status(400).json({ success: false, message: 'Email is required' });
@@ -95,12 +95,13 @@ const sendAdmissionOTP = async (req, res) => {
     // Log OTP for development
     console.log(`\n📧 [ADMISSION OTP] ${student_email}: ${otp}\n`);
 
-    return res.json({ success: true, message: 'OTP sent successfully to your email.' });
-  } catch (err) {
-    console.error('Send Admission OTP error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to send OTP.' });
+    return res.json({ success: true, message: 'OTP sent successfully' });
+  } catch (error) {
+    console.error('OTP ERROR:', error);
+    return res.status(500).json({ success: false, message: 'Failed to send OTP' });
   }
 };
+
 
 // POST /api/admissions/verify-and-admit
 const verifyAndCreateAdmission = async (req, res) => {

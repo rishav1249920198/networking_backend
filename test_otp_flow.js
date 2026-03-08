@@ -12,7 +12,7 @@ async function runTests() {
     // 1. Send OTP Request
     console.log('1. Requesting OTP...');
     const res1 = await request(app)
-      .post('/api/admissions/send-otp')
+      .post('/api/admissions/request-otp')
       .send({
         student_name: 'Test Student',
         student_email: testEmail,

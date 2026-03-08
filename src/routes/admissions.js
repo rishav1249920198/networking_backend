@@ -14,7 +14,7 @@ const {
   verifyAndCreateAdmission
 } = require('../controllers/admissionController');
 
-router.post('/send-otp', sendAdmissionOTP);
+router.post('/request-otp', sendAdmissionOTP);
 router.post('/verify-and-admit', handleUpload, verifyAndCreateAdmission);
 
 router.post('/public', handleUpload, createPublicAdmission);
