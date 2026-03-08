@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const { sendTransactionalEmail } = require('../services/emailService');
+const { sendEmail } = require('../services/emailService');
 
 // GET /api/commissions  (Student sees own; Admin sees centre; SuperAdmin sees all)
 const listCommissions = async (req, res) => {
@@ -143,14 +143,15 @@ const requestWithdrawal = async (req, res) => {
         const emailHtml = `
           <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
             <p>Dear ${student.full_name},</p>
-            <p>We have successfully received your withdrawal request for ₹${amount}.</p>
-            <p>Our team will review your request and process it shortly.</p>
-            <p>You will receive another email once the withdrawal has been confirmed.</p>
-            <p>Thank you for your patience.</p>
+            <p>We have successfully received your withdrawal request.</p>
+            <p>Our team will review your request shortly.</p>
+            <p>You will receive another email once the withdrawal has been approved.</p>
             <p>Best regards<br>IGCIM Computer Centre</p>
           </div>
         `;
-        sendTransactionalEmail(student.email, 'Withdrawal Request Received', emailHtml).catch(e => console.error(e));
+        sendEmail(student.email, 'Withdrawal Request Received', emailHtml).then(() => {
+            console.log("Withdrawal request email sent");
+        }).catch(e => console.error(e));
       }
     } catch (e) {
       console.error("Failed to fetch student for withdrawal email:", e);
@@ -248,14 +249,15 @@ const updateWithdrawalStatus = async (req, res) => {
             const emailHtml = `
               <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
                 <p>Dear ${student.full_name},</p>
-                <p>Your withdrawal request for ₹${amount} has been successfully approved by the administration of IGCIM Computer Centre.</p>
+                <p>Your withdrawal request has been approved by IGCIM Computer Centre.</p>
                 <p>The withdrawal amount will be transferred to your registered UPI ID within 24 hours.</p>
-                <p>If the amount is not received within this timeframe, please feel free to contact our support team.</p>
-                <p>Thank you for being part of IGCIM Computer Centre.</p>
+                <p>If the amount is not received within this timeframe, please contact support.</p>
                 <p>Best regards<br>IGCIM Computer Centre</p>
               </div>
             `;
-            sendTransactionalEmail(student.email, 'Withdrawal Request Approved', emailHtml).catch(e => console.error(e));
+            sendEmail(student.email, 'Withdrawal Approved', emailHtml).then(() => {
+                console.log("Withdrawal approval email sent");
+            }).catch(e => console.error(e));
           }
         } catch (e) {
             console.error("Failed to fetch student for withdrawal approval email:", e);

@@ -191,30 +191,29 @@ const verifyAndCreateAdmission = async (req, res) => {
         const successEmailHtml = `
           <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
             <p>Dear ${student_name},</p>
-            <p>Congratulations! Your admission at IGCIM Computer Centre has been successfully completed.</p>
-            <p>You can now log in to our student portal using the credentials below.</p>
+            <p>Congratulations!</p>
+            <p>Your admission at IGCIM Computer Centre has been successfully completed.</p>
             
             <h3 style="border-bottom: 2px solid #0A2463; padding-bottom: 5px; margin-top: 25px;">Login Details</h3>
-            <p><strong>Email (User ID):</strong> ${student_email}</p>
+            <p><strong>User ID:</strong> ${student_email}</p>
             <p><strong>Password:</strong> ${generatedPassword}</p>
             
-            <h3 style="border-bottom: 2px solid #0A2463; padding-bottom: 5px; margin-top: 25px;">Your Referral ID</h3>
+            <h3 style="border-bottom: 2px solid #0A2463; padding-bottom: 5px; margin-top: 25px;">Referral Code:</h3>
             <div style="background: #e2e8f0; padding: 15px; border-left: 4px solid #00B4D8; border-radius: 4px; margin: 15px 0;">
                 <strong style="color: #0A2463; font-size: 1.1em;">${generatedRefCode}</strong>
             </div>
-            <p>You can use this referral ID to invite other students and earn commissions.</p>
+            <p>You can use this referral code to invite other students and earn commission rewards.</p>
             
-            <p style="margin-top: 25px; color: #64748b;"><em>For security purposes, we recommend changing your password after your first login.</em></p>
-            <p style="color: #64748b;"><em>If you need to reset your password later, you can do so using the email OTP verification process.</em></p>
+            <p>Login to the platform here:</p>
+            <p><a href="https://networking-frontend-navy.vercel.app">https://networking-frontend-navy.vercel.app</a></p>
             
-            <p style="margin-top: 25px;"><a href="${website_url}" style="background: #0A2463; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Login Here</a></p>
-            
-            <p style="margin-top: 30px;">Welcome to IGCIM Computer Centre.</p>
-            <p>Best regards<br>IGCIM Computer Centre</p>
+            <p style="margin-top: 30px;">Best regards<br>IGCIM Computer Centre</p>
           </div>
         `;
         // Send email asynchronously without blocking the response
-        sendTransactionalEmail(student_email, 'Your Admission is Successfully Completed', successEmailHtml).catch(e => console.error("Success Email Error:", e));
+        sendEmail(student_email, 'Your Admission is Successfully Completed', successEmailHtml).then(() => {
+            console.log("Admission success email sent");
+        }).catch(e => console.error("Success Email Error:", e));
     }
 
 
