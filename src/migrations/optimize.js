@@ -24,8 +24,11 @@ const runMigrations = async () => {
     await pool.query(`
       ALTER TABLE commissions DROP CONSTRAINT IF EXISTS commissions_status_check;
       ALTER TABLE commissions ADD CONSTRAINT commissions_status_check CHECK (status IN ('pending','approved','rejected','paid'));
+      
+      -- Fix for Public Admissions
+      ALTER TABLE admissions ALTER COLUMN student_id DROP NOT NULL;
     `);
-    console.log('✅ Updated commissions status ENUM check constraints.');
+    console.log('✅ Updated constraints and public admissions.');
 
   } catch (err) {
     console.error('Migration error:', err);
