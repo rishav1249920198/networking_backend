@@ -1,50 +1,16 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 require('dotenv').config();
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
-  }
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Detect unconfigured/placeholder SMTP credentials
-const isSmtpConfigured = () => {
-  const user = process.env.SMTP_USER || '';
-  const pass = process.env.SMTP_PASS || '';
-  return user.length > 0
-    && !user.includes('your_email')
-    && !user.includes('example')
-    && pass.length > 0
-    && !pass.includes('your_app_password');
+const sendEmail = async (to, subject, html) => {
+  await resend.emails.send({
+    from: "IGCIM <onboarding@resend.dev>",
+    to,
+    subject,
+    html
+  });
 };
 
-const sendTransactionalEmail = async (to, subject, html) => {
-  if (!isSmtpConfigured()) {
-    console.log(`\n📧 [NO SMTP] To: ${to} | Subject: ${subject}`);
-    return { messageId: 'no-smtp' };
-  }
-
-  try {
-    await transporter.verify();
-    console.log("SMTP server is ready");
-
-    const info = await transporter.sendMail({
-      from: process.env.SMTP_USER ? `IGCIM Computer Centre <${process.env.SMTP_USER}>` : 'noreply@igcim.com',
-      to,
-      subject,
-      html,
-    });
-    
-    console.log("OTP email sent successfully");
-    return info;
-  } catch (error) {
-    console.error("OTP EMAIL ERROR:", error);
-    throw error;
-  }
-};
-
-module.exports = { sendTransactionalEmail };
+// Aliased to prevent breaking other files that use sendTransactionalEmail
+module.exports = { sendEmail, sendTransactionalEmail: sendEmail };

@@ -2,7 +2,7 @@ const pool = require('../config/db');
 const { validateReferral } = require('../services/referralValidator');
 const { generateCommission } = require('../services/commissionEngine');
 const AdmissionService = require('../services/AdmissionService');
-const { sendTransactionalEmail } = require('../services/emailService');
+const { sendEmail, sendTransactionalEmail } = require('../services/emailService');
 const { generateOTP, generateSystemId, generateReferralCode } = require('../utils/generators');
 const bcrypt = require('bcryptjs');
 
@@ -90,7 +90,7 @@ const sendAdmissionOTP = async (req, res) => {
       </div>
     `;
 
-    await sendTransactionalEmail(student_email, 'Email Verification for Admission', emailHtml);
+    await sendEmail(student_email, 'Email Verification for Admission', emailHtml);
     
     // Log OTP for development
     console.log(`\n📧 [ADMISSION OTP] ${student_email}: ${otp}\n`);
