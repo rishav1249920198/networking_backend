@@ -165,7 +165,7 @@ const updateUserRole = async (req, res) => {
 
     const result = await pool.query(`UPDATE users SET role_id = $1, updated_at = NOW() WHERE id = $2 RETURNING id`, [roleId, id]);
     if (result.rowCount === 0) return res.status(404).json({ success: false, message: 'User not found.' });
-    return res.json({ success: true, message: \`User successfully updated to \${role}\` });
+    return res.json({ success: true, message: `User successfully updated to ${role}` });
   } catch (err) {
     console.error('Update User Role Error:', err);
     return res.status(500).json({ success: false, message: 'Failed to update user role.' });
