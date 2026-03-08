@@ -49,13 +49,16 @@ const authenticate = async (req, res, next) => {
   }
 };
 
-const requireRole = (roles) => (req, res, next) => {
+const requireRole = (...roles) => (req, res, next) => {
   if (!req.user) return res.status(401).json({ success: false, message: 'Unauthorized' });
-  const allowed = Array.isArray(roles) ? roles : [roles];
+  const allowed = Array.isArray(roles[0]) ? roles[0] : roles;
   if (!allowed.includes(req.user.role)) {
     return res.status(403).json({ success: false, message: 'Access denied.' });
   }
   next();
 };
+const requireAdmin = requireRole(['super_admin', 'centre_admin', 'admin']);
+const requireCoAdminOrAdmin = requireRole(['super_admin', 'centre_admin', 'admin', 'co-admin']);
+const requireStudent = requireRole(['student', 'co-admin']);
 
-module.exports = { authenticate, requireRole };
+module.exports = { authenticate, requireRole, requireAdmin, requireCoAdminOrAdmin, requireStudent };

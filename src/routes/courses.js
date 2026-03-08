@@ -1,13 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { listCourses, listPublicCourses, createCourse, updateCourse, deleteCourse } = require('../controllers/courseController');
-const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/rbac');
+const { authenticate, requireCoAdminOrAdmin } = require('../middleware/auth');
 
 router.get('/public', listPublicCourses);
 router.get('/', authenticate, listCourses);
-router.post('/', authenticate, requireRole('centre_admin', 'super_admin'), createCourse);
-router.put('/:id', authenticate, requireRole('centre_admin', 'super_admin'), updateCourse);
-router.delete('/:id', authenticate, requireRole('centre_admin', 'super_admin'), deleteCourse);
+router.post('/', authenticate, requireCoAdminOrAdmin, createCourse);
+router.put('/:id', authenticate, requireCoAdminOrAdmin, updateCourse);
+router.delete('/:id', authenticate, requireCoAdminOrAdmin, deleteCourse);
 
 module.exports = router;
