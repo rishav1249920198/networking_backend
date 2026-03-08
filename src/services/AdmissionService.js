@@ -101,6 +101,14 @@ class AdmissionService {
       }
     }
 
+    // Link referred_by to user table if missing
+    if (referredByUserId && student_id) {
+       await pool.query(
+         `UPDATE users SET referred_by = $1 WHERE id = $2 AND referred_by IS NULL`,
+         [referredByUserId, student_id]
+       );
+    }
+
     // 4. Insert Admission
     const insertSQL = `
       INSERT INTO admissions

@@ -1,0 +1,78 @@
+{
+  "users": [
+    {
+      "id": "331ad96d-2e44-4cb1-87f8-38e42b9141fc",
+      "system_id": "IGCIM2600002",
+      "full_name": "Rishav Kumar",
+      "role_id": 1,
+      "centre_id": "02d7449a-696f-4f7d-bd24-484ca3da4bd7",
+      "referred_by": null
+    },
+    {
+      "id": "efd60728-c1f5-4f29-a16f-871aeb510953",
+      "system_id": "IGCIM2600749",
+      "full_name": "Rishav Kumar",
+      "role_id": 4,
+      "centre_id": "02d7449a-696f-4f7d-bd24-484ca3da4bd7",
+      "referred_by": null
+    },
+    {
+      "id": "a15116e0-edab-4a18-a971-c049a9844887",
+      "system_id": "IGCIM2600003",
+      "full_name": "Rishav Kumar",
+      "role_id": 5,
+      "centre_id": "02d7449a-696f-4f7d-bd24-484ca3da4bd7",
+      "referred_by": "331ad96d-2e44-4cb1-87f8-38e42b9141fc"
+    }
+  ],
+  "roles": [
+    {
+      "id": 1,
+      "name": "super_admin"
+    },
+    {
+      "id": 2,
+      "name": "centre_admin"
+    },
+    {
+      "id": 3,
+      "name": "staff"
+    },
+    {
+      "id": 4,
+      "name": "student"
+    },
+    {
+      "id": 5,
+      "name": "co-admin"
+    }
+  ],
+  "admissions": [
+    {
+      "id": "a5aef423-4fd7-406f-92c1-70007477737a",
+      "student_id": "a15116e0-edab-4a18-a971-c049a9844887",
+      "centre_id": "02d7449a-696f-4f7d-bd24-484ca3da4bd7",
+      "referred_by_user_id": "331ad96d-2e44-4cb1-87f8-38e42b9141fc"
+    },
+    {
+      "id": "a511b817-ae10-4523-852c-aff83b80be35",
+      "student_id": "efd60728-c1f5-4f29-a16f-871aeb510953",
+      "centre_id": "02d7449a-696f-4f7d-bd24-484ca3da4bd7",
+      "referred_by_user_id": "a15116e0-edab-4a18-a971-c049a9844887"
+    }
+  ],
+  "commissions": [
+    {
+      "id": "50a2ec3c-e287-4cf6-9603-5c423b7af5b0",
+      "admission_id": "a5aef423-4fd7-406f-92c1-70007477737a",
+      "referrer_id": "331ad96d-2e44-4cb1-87f8-38e42b9141fc",
+      "amount": "427.50"
+    },
+    {
+      "id": "9cb2030c-36b6-4b6d-83f3-3afe6bf00341",
+      "admission_id": "a511b817-ae10-4523-852c-aff83b80be35",
+      "referrer_id": "a15116e0-edab-4a18-a971-c049a9844887",
+      "amount": "256.50"
+    }
+  ]
+}
