@@ -1,10 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const { getStudentDashboard, getAdminDashboard } = require('../controllers/dashboardController');
-const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/rbac');
+const { authenticate, requireCoAdminOrAdmin, requireStudent } = require('../middleware/auth');
 
-router.get('/student', authenticate, requireRole('student'), getStudentDashboard);
-router.get('/admin', authenticate, requireRole('centre_admin', 'super_admin'), getAdminDashboard);
+router.get('/student', authenticate, requireStudent, getStudentDashboard);
+router.get('/admin', authenticate, requireCoAdminOrAdmin, getAdminDashboard);
 
 module.exports = router;
