@@ -121,4 +121,31 @@ const getAdminDashboard = async (req, res) => {
   }
 };
 
-module.exports = { getStudentDashboard, getAdminDashboard };
+// GET /api/dashboard/stats
+const getDashboardStats = async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const [referrals, leads, admissions, commissions] = await Promise.all([
+      pool.query(`SELECT COUNT(*) AS total_referrals FROM users WHERE referred_by = $1`, [userId]),
+      pool.query(`SELECT COUNT(*) AS total_leads FROM admissions WHERE referred_by_user_id = $1 AND status = 'pending'`, [userId]),
+      pool.query(`SELECT COUNT(*) AS total_admissions FROM admissions WHERE referred_by_user_id = $1 AND status = 'approved'`, [userId]),
+      pool.query(`SELECT COALESCE(SUM(amount), 0) AS total_commission FROM commissions WHERE referrer_id = $1`, [userId])
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        total_referrals: parseInt(referrals.rows[0].total_referrals) || 0,
+        total_leads: parseInt(leads.rows[0].total_leads) || 0,
+        total_admissions: parseInt(admissions.rows[0].total_admissions) || 0,
+        total_commission: parseFloat(commissions.rows[0].total_commission) || 0
+      }
+    });
+  } catch (err) {
+    console.error('Dashboard Stats Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch dashboard stats.' });
+  }
+};
+
+module.exports = { getStudentDashboard, getAdminDashboard, getDashboardStats };

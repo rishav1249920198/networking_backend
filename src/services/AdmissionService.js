@@ -25,12 +25,12 @@ class AdmissionService {
 
     // 2. Auto-Create User if Missing (Public / Offline)
     if (!student_id && student_email && student_mobile) {
-      const userCheck = await pool.query(\`SELECT id FROM users WHERE email = $1 OR mobile = $2\`, [student_email, student_mobile]);
+      const userCheck = await pool.query(`SELECT id FROM users WHERE email = $1 OR mobile = $2`, [student_email, student_mobile]);
       if (userCheck.rows.length > 0) {
          student_id = userCheck.rows[0].id;
       } else {
-         const roleRes = await pool.query(\`SELECT id FROM roles WHERE name = 'student'\`);
-         const countRes = await pool.query(\`SELECT COUNT(*) FROM users\`);
+         const roleRes = await pool.query(`SELECT id FROM roles WHERE name = 'student'`);
+         const countRes = await pool.query(`SELECT COUNT(*) FROM users`);
          const sysId = generateSystemId('IGCIM', parseInt(countRes.rows[0].count) + 1);
          const passHash = await bcrypt.hash(student_mobile.toString(), 10);
          
@@ -38,13 +38,13 @@ class AdmissionService {
          let unique = false;
          while(!unique) {
            newRefCode = generateReferralCode('IGCIM');
-           const check = await pool.query(\`SELECT id FROM users WHERE referral_code = $1\`, [newRefCode]);
+           const check = await pool.query(`SELECT id FROM users WHERE referral_code = $1`, [newRefCode]);
            if (check.rows.length === 0) unique = true;
          }
 
          const newUser = await pool.query(
-           \`INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile, password_hash, referral_code)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id\`,
+           `INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile, password_hash, referral_code)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
            [sysId, centre_id, roleRes.rows[0].id, student_name, student_email, student_mobile, passHash, newRefCode]
          );
          student_id = newUser.rows[0].id;
