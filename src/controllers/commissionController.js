@@ -262,6 +262,29 @@ const updateWithdrawalStatus = async (req, res) => {
         } catch (e) {
             console.error("Failed to fetch student for withdrawal approval email:", e);
         }
+    } else if (status === 'rejected') {
+        try {
+          const { student_id, amount } = wRes.rows[0];
+          const studentRes = await pool.query('SELECT email, full_name FROM users WHERE id = $1', [student_id]);
+          if (studentRes.rows.length > 0) {
+            const student = studentRes.rows[0];
+            const emailHtml = `
+              <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+                <p>Dear ${student.full_name},</p>
+                <p>Your withdrawal request has been rejected by IGCIM Computer Centre.</p>
+                ${admin_notes ? `<p><strong>Admin Note:</strong> ${admin_notes}</p>` : ''}
+                <p>The requested withdrawal amount will be returned to your account balance.</p>
+                <p>If you have any questions, please contact support.</p>
+                <p>Best regards<br>IGCIM Computer Centre</p>
+              </div>
+            `;
+            sendEmail(student.email, 'Withdrawal Rejected', emailHtml).then(() => {
+                console.log("Withdrawal rejected email sent");
+            }).catch(e => console.error(e));
+          }
+        } catch (e) {
+            console.error("Failed to fetch student for withdrawal rejection email:", e);
+        }
     }
 
     return res.json({ success: true, message: `Withdrawal request marked as ${status}.` });
