@@ -187,7 +187,7 @@ const verifyAndCreateAdmission = async (req, res) => {
 
     // 6. Send Admission Success Email (Post-Commit)
     if (generatedPassword && generatedRefCode) {
-        const website_url = process.env.APP_URL || 'http://localhost:5173/login';
+        const website_url = process.env.APP_URL || 'https://networking-frontend-navy.vercel.app/login';
         const successEmailHtml = `
           <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
             <p>Dear ${student_name},</p>
@@ -205,7 +205,7 @@ const verifyAndCreateAdmission = async (req, res) => {
             <p>You can use this referral code to invite other students and earn commission rewards.</p>
             
             <p>Login to the platform here:</p>
-            <p><a href="https://networking-frontend-navy.vercel.app">https://networking-frontend-navy.vercel.app</a></p>
+            <p><a href="${website_url}">${website_url}</a></p>
             
             <p style="margin-top: 30px;">Best regards<br>IGCIM Computer Centre</p>
           </div>

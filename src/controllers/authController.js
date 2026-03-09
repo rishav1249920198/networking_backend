@@ -132,6 +132,35 @@ const resendOTP = async (req, res) => {
   }
 };
 
+// POST /api/auth/request-otp
+// Generic email OTP sender used by login/verification screens
+const requestLoginOTP = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ success: false, message: 'Email is required.' });
+  }
+
+  try {
+    const result = await sendEmailOTP(email, 'login');
+
+    if (!result.success) {
+      return res.status(429).json({
+        success: false,
+        message: result.message || 'Please wait before requesting a new OTP.',
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'OTP sent successfully',
+    });
+  } catch (err) {
+    console.error('Request login OTP error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to send OTP.' });
+  }
+};
+
 // POST /api/auth/login
 const login = async (req, res) => {
   const { email, password } = req.body;
