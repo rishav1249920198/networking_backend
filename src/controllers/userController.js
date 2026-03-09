@@ -175,20 +175,35 @@ const updateUserRole = async (req, res) => {
 // DELETE /api/users/:id
 const deleteUser = async (req, res) => {
   const { id } = req.params;
+  const client = await pool.connect();
   try {
-    const checkUser = await pool.query(`SELECT ro.name as role FROM users u JOIN roles ro ON ro.id = u.role_id WHERE u.id = $1`, [id]);
-    if (checkUser.rowCount === 0) return res.status(404).json({ success: false, message: 'User not found.' });
+    await client.query('BEGIN');
+    const checkUser = await client.query(`SELECT ro.name as role FROM users u JOIN roles ro ON ro.id = u.role_id WHERE u.id = $1`, [id]);
+    if (checkUser.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
     
     // Prevent deletion of higher admins
     if (['super_admin', 'admin', 'centre_admin'].includes(checkUser.rows[0].role)) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ success: false, message: 'Cannot delete an administrator account.' });
     }
 
-    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    // Delete child records to satisfy foreign key constraints
+    await client.query('DELETE FROM withdrawal_requests WHERE student_id = $1', [id]);
+    await client.query('DELETE FROM commissions WHERE referrer_id = $1', [id]);
+    await client.query('DELETE FROM admissions WHERE student_id = $1', [id]);
+    await client.query('DELETE FROM users WHERE id = $1', [id]);
+
+    await client.query('COMMIT');
     return res.json({ success: true, message: 'User successfully deleted.' });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Delete User Error:', err);
     return res.status(500).json({ success: false, message: 'Failed to delete user.' });
+  } finally {
+    client.release();
   }
 };
 
