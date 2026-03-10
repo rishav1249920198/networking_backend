@@ -1,29 +1,33 @@
-const { Resend } = require("resend");
+const nodemailer = require("nodemailer")
+
+const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS
+  }
+})
 
 const sendEmail = async (to, subject, html) => {
   try {
-    if (!process.env.RESEND_API_KEY) {
-      throw new Error("RESEND_API_KEY missing in environment variables");
-    }
+    const info = await transporter.sendMail({
+      from: `"IGCIM Computer Centre" <${process.env.SMTP_USER}>`,
+      to,
+      subject,
+      html
+    })
 
-    const resend = new Resend(process.env.RESEND_API_KEY);
-
-    const response = await resend.emails.send({
-      from: "IGCIM Computer Centre <onboarding@resend.dev>",
-      to: [to],
-      subject: subject,
-      html: html
-    });
-
-    console.log("Email sent:", response.id);
-    return response;
-  } catch (error) {
-    console.error("Resend email error:", error);
-    throw error;
+    console.log("Email sent:", info.messageId)
+    return info
+  } catch(error) {
+    console.error("SMTP EMAIL ERROR:", error)
+    throw error
   }
-};
+}
 
 module.exports = {
   sendEmail,
   sendTransactionalEmail: sendEmail
-};
+}

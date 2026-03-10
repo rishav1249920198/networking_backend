@@ -151,7 +151,7 @@ const requestWithdrawal = async (req, res) => {
         `;
         sendEmail(student.email, 'Withdrawal Request Received', emailHtml).then(() => {
             console.log("Withdrawal request email sent");
-        }).catch(e => console.error(e));
+        }).catch(e => console.error("SMTP EMAIL ERROR:", e));
       }
     } catch (e) {
       console.error("Failed to fetch student for withdrawal email:", e);
@@ -257,7 +257,7 @@ const updateWithdrawalStatus = async (req, res) => {
             `;
             sendEmail(student.email, 'Withdrawal Approved', emailHtml).then(() => {
                 console.log("Withdrawal approval email sent");
-            }).catch(e => console.error(e));
+            }).catch(e => console.error("SMTP EMAIL ERROR:", e));
           }
         } catch (e) {
             console.error("Failed to fetch student for withdrawal approval email:", e);
@@ -280,7 +280,7 @@ const updateWithdrawalStatus = async (req, res) => {
             `;
             sendEmail(student.email, 'Withdrawal Request Update', emailHtml).then(() => {
                 console.log("Withdrawal rejected email sent");
-            }).catch(e => console.error(e));
+            }).catch(e => console.error("SMTP EMAIL ERROR:", e));
           }
         } catch (e) {
             console.error("Failed to fetch student for withdrawal rejection email:", e);

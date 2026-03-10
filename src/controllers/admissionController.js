@@ -121,10 +121,10 @@ const sendAdmissionOTP = async (req, res) => {
     console.log(`\n📧 [ADMISSION OTP] ${finalEmail}: ${otp}\n`);
 
     return res.json({ success: true, message: 'OTP sent successfully' });
-  } catch (error) {
-    console.error("EMAIL DELIVERY FAILED:", error);
-    return res.json({ success: false, message: "Failed to send OTP email" });
-  }
+    } catch (error) {
+      console.error("SMTP EMAIL ERROR:", error);
+      return res.json({ success: false, message: "Failed to send OTP email" });
+    }
 };
 
 
@@ -237,7 +237,7 @@ const verifyAndCreateAdmission = async (req, res) => {
         // Send email asynchronously without blocking the response
         sendEmail(student_email, 'Your Admission is Successfully Completed', successEmailHtml).then(() => {
             console.log("Admission success email sent");
-        }).catch(e => console.error("EMAIL DELIVERY FAILED:", e));
+        }).catch(e => console.error("SMTP EMAIL ERROR:", e));
     }
 
 

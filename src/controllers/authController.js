@@ -125,7 +125,7 @@ const register = async (req, res) => {
       await sendEmail(email, subject, html);
       console.log(`[Register] OTP successfully sent to ${email}`);
     } catch (emailErr) {
-      console.error("[Register] EMAIL DELIVERY FAILED:", emailErr);
+      console.error("SMTP EMAIL ERROR:", emailErr);
       return res.json({ success: false, message: "Failed to send OTP email" });
     }
 
