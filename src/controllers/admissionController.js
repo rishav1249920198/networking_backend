@@ -122,8 +122,8 @@ const sendAdmissionOTP = async (req, res) => {
 
     return res.json({ success: true, message: 'OTP sent successfully' });
   } catch (error) {
-    console.error('FINAL OTP ERROR:', error);
-    return res.status(500).json({ success: false, message: error.message || 'Failed to send OTP' });
+    console.error("EMAIL DELIVERY FAILED:", error);
+    return res.json({ success: false, message: "Failed to send OTP email" });
   }
 };
 
@@ -229,8 +229,7 @@ const verifyAndCreateAdmission = async (req, res) => {
             </div>
             <p>You can use this referral code to invite other students and earn commission rewards.</p>
             
-            <p>Login to the platform here:</p>
-            <p><a href="${website_url}">${website_url}</a></p>
+            <p>Login URL: <a href="${website_url}">${website_url}</a></p>
             
             <p style="margin-top: 30px;">Best regards<br>IGCIM Computer Centre</p>
           </div>
@@ -238,7 +237,7 @@ const verifyAndCreateAdmission = async (req, res) => {
         // Send email asynchronously without blocking the response
         sendEmail(student_email, 'Your Admission is Successfully Completed', successEmailHtml).then(() => {
             console.log("Admission success email sent");
-        }).catch(e => console.error("Success Email Error:", e));
+        }).catch(e => console.error("EMAIL DELIVERY FAILED:", e));
     }
 
 

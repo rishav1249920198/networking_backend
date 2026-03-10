@@ -1,38 +1,29 @@
-const nodemailer = require('nodemailer');
-require('dotenv').config();
-
-console.log(`[EmailService] Initializing transporter with host: ${process.env.SMTP_HOST || 'smtp.gmail.com'}, port: 587, family: 4`);
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false
-  },
-  connectionTimeout: 15000, 
-  greetingTimeout: 15000,
-  socketTimeout: 20000,
-  family: 4 
-});
+const { Resend } = require("resend");
 
 const sendEmail = async (to, subject, html) => {
-  console.log(`[EmailService] Attempting to send email to: ${to}, Subject: ${subject}`);
   try {
-    const info = await transporter.sendMail({
-      from: `"IGCIM Computer Centre" <${process.env.SMTP_USER}>`,
-      to,
-      subject,
-      html
+    if (!process.env.RESEND_API_KEY) {
+      throw new Error("RESEND_API_KEY missing in environment variables");
+    }
+
+    const resend = new Resend(process.env.RESEND_API_KEY);
+
+    const response = await resend.emails.send({
+      from: "IGCIM Computer Centre <onboarding@resend.dev>",
+      to: [to],
+      subject: subject,
+      html: html
     });
-    console.log(`[EmailService] Email sent successfully: ${info.messageId}`);
+
+    console.log("Email sent:", response.id);
+    return response;
   } catch (error) {
-    console.error(`[EmailService] Failed to send email to ${to}:`, error);
+    console.error("Resend email error:", error);
     throw error;
   }
 };
 
-module.exports = { sendEmail, sendTransactionalEmail: sendEmail };
+module.exports = {
+  sendEmail,
+  sendTransactionalEmail: sendEmail
+};
