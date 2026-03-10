@@ -67,30 +67,35 @@ const register = async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 12);
 
     // Use provided centre_id or get first/default centre
-    let centreId = centre_id;
+    let centreId = centre_id || null;
     if (!centreId) {
       const centreResult = await pool.query(`SELECT id FROM centres LIMIT 1`);
-      centreId = centreResult.rows[0]?.id;
+      centreId = centreResult.rows[0]?.id || null;
     }
 
-    // 4 generate OTP
-    const otp = generateReferralCode('').slice(0, 6); // Simple random OTP or use generateOTP()
+    // 4 generate OTP - Use numeric 6 digits for consistency
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    // 5 save to pending_registrations (with UPSERT logic using email)
-    await pool.query(
-      `INSERT INTO pending_registrations (email, full_name, mobile, password_hash, referral_code, centre_id, otp_code, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (email) DO UPDATE SET
-         full_name = EXCLUDED.full_name,
-         mobile = EXCLUDED.mobile,
-         password_hash = EXCLUDED.password_hash,
-         referral_code = EXCLUDED.referral_code,
-         centre_id = EXCLUDED.centre_id,
-         otp_code = EXCLUDED.otp_code,
-         expires_at = EXCLUDED.expires_at`,
-      [email, final_name, mobile, passwordHash, referral_code, centreId, otp, expiresAt]
-    );
+    // 5 save to pending_registrations
+    try {
+      await pool.query(
+        `INSERT INTO pending_registrations (email, full_name, mobile, password_hash, referral_code, centre_id, otp_code, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (email) DO UPDATE SET
+           full_name = EXCLUDED.full_name,
+           mobile = EXCLUDED.mobile,
+           password_hash = EXCLUDED.password_hash,
+           referral_code = EXCLUDED.referral_code,
+           centre_id = EXCLUDED.centre_id,
+           otp_code = EXCLUDED.otp_code,
+           expires_at = EXCLUDED.expires_at`,
+        [email, final_name, mobile, passwordHash, referral_code || null, centreId, otp, expiresAt]
+      );
+    } catch (dbErr) {
+      console.error("[Register] Database Error saving pending registration:", dbErr);
+      throw dbErr; // Let it be caught by the main catch block
+    }
 
     // 6 Send email OTP
     const subject = 'IGCIM - Email Verification OTP';
@@ -114,15 +119,13 @@ const register = async (req, res) => {
       </div>
     `;
 
-    console.log(`[Register] Sending OTP ${otp} to ${email}...`);
+    console.log(`[Register] Attempting to send OTP ${otp} to ${email}...`);
     try {
       const { sendEmail } = require('../services/emailService');
       await sendEmail(email, subject, html);
-      console.log(`[Register] OTP sent to ${email}`);
+      console.log(`[Register] OTP successfully sent to ${email}`);
     } catch (emailErr) {
       console.error("[Register] EMAIL DELIVERY FAILED:", emailErr);
-      // We still return success:true but warn that OTP might be delayed if we want, 
-      // but the user wants "same fix need here" as admission, which returns false on failure.
       return res.json({ success: false, message: "Failed to send OTP email" });
     }
 

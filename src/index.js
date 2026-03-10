@@ -39,7 +39,9 @@ const corsOptions = {
     "Content-Type",
     "Authorization",
     "Cache-Control",
-    "Pragma"
+    "Pragma",
+    "Expires",
+    "X-Requested-With"
   ]
 };
 
