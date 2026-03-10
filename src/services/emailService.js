@@ -2,9 +2,9 @@ const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: 587, // Switch to 587 for STARTTLS
-  secure: false, // Must be false for 587
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
@@ -15,6 +15,8 @@ const transporter = nodemailer.createTransport({
   connectionTimeout: 10000, 
   greetingTimeout: 10000,
   socketTimeout: 15000,
+  // Force IPv4 to avoid ENETUNREACH on IPv6-enabled environments
+  family: 4 
 });
 
 const sendEmail = async (to, subject, html) => {
