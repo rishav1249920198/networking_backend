@@ -80,10 +80,17 @@ const sendAdmissionOTP = async (req, res) => {
 
   try {
     // Store OTP in database
-    await pool.query(
-      `INSERT INTO admission_otps (email, otp, expires_at) VALUES ($1, $2, $3)`,
-      [finalEmail, otp, expiresAt]
-    );
+    console.log(`[AdmissionOTP] Storing OTP for ${finalEmail}...`);
+    try {
+      await pool.query(
+        `INSERT INTO admission_otps (email, otp, expires_at) VALUES ($1, $2, $3)`,
+        [finalEmail, otp, expiresAt]
+      );
+      console.log(`[AdmissionOTP] OTP stored successfully.`);
+    } catch (dbErr) {
+      console.error('[AdmissionOTP] Database storage failed:', dbErr);
+      throw new Error('Database error during OTP storage: ' + dbErr.message);
+    }
 
     // Send Email
     const emailHtml = `
@@ -100,15 +107,23 @@ const sendAdmissionOTP = async (req, res) => {
       </div>
     `;
 
-    await sendEmail(finalEmail, 'Email Verification for Admission', emailHtml);
+    console.log(`[AdmissionOTP] Sending email to ${finalEmail}...`);
+    try {
+      await sendEmail(finalEmail, 'Email Verification for Admission', emailHtml);
+      console.log(`[AdmissionOTP] Email sent to ${finalEmail}.`);
+    } catch (emailErr) {
+      console.error('[AdmissionOTP] Email delivery failed:', emailErr);
+      // We still return 500 but with more details
+      throw new Error('Email delivery failed: ' + emailErr.message);
+    }
     
     // Log OTP for development
     console.log(`\n📧 [ADMISSION OTP] ${finalEmail}: ${otp}\n`);
 
     return res.json({ success: true, message: 'OTP sent successfully' });
   } catch (error) {
-    console.error('OTP ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Failed to send OTP email: ' + (error.message || 'Unknown error') });
+    console.error('FINAL OTP ERROR:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Failed to send OTP' });
   }
 };
 
