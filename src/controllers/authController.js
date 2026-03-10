@@ -17,13 +17,16 @@ const logActivity = async (actorId, actorRole, action, targetType, targetId, met
 
 // POST /api/auth/register
 const register = async (req, res) => {
-  const { full_name, email, mobile, password, referral_code, centre_id } = req.body;
+  console.log("REGISTER BODY:", req.body);
+  const { full_name, name, email, mobile, password, referral_code, centre_id } = req.body;
+  const final_name = full_name || name;
 
   try {
     // 1 validate inputs
-    if (!full_name || !email || !mobile || !password) {
-      return res.status(400).json({ success: false, message: 'All fields are required.' });
-    }
+    if (!final_name) return res.status(400).json({ success: false, message: 'Name is required.' });
+    if (!email) return res.status(400).json({ success: false, message: 'Email is required.' });
+    if (!mobile) return res.status(400).json({ success: false, message: 'Mobile is required.' });
+    if (!password) return res.status(400).json({ success: false, message: 'Password is required.' });
 
     // 2 check existing user
     const dupCheck = await pool.query(
@@ -86,7 +89,7 @@ const register = async (req, res) => {
                               password_hash, referral_code, referred_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING id, system_id, email, full_name`,
-          [systemId, centreId, roleId, full_name, email, mobile, passwordHash, newReferralCode, referredByUserId]
+          [systemId, centreId, roleId, final_name, email, mobile, passwordHash, newReferralCode, referredByUserId]
         );
         newUser = userResult.rows[0];
         registered = true;

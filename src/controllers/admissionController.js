@@ -61,8 +61,18 @@ const createPublicAdmission = async (req, res) => {
 
 // POST /api/admissions/request-otp
 const sendAdmissionOTP = async (req, res) => {
-  const { student_name, student_email, student_mobile } = req.body;
-  if (!student_email) return res.status(400).json({ success: false, message: 'Email is required' });
+  console.log("OTP REQUEST BODY:", req.body);
+  const { student_name, name, student_email, email, student_mobile, mobile, course_id, course } = req.body;
+  
+  const finalEmail = student_email || email;
+  const finalName = student_name || name;
+  const finalMobile = student_mobile || mobile;
+  const finalCourse = course_id || course;
+
+  if (!finalEmail) return res.status(400).json({ success: false, message: 'Email is required' });
+  if (!finalName) return res.status(400).json({ success: false, message: 'Name is required' });
+  if (!finalMobile) return res.status(400).json({ success: false, message: 'Mobile is required' });
+  if (!finalCourse) return res.status(400).json({ success: false, message: 'Course is required' });
 
   // Generate OTP
   const otp = generateOTP();
@@ -72,13 +82,13 @@ const sendAdmissionOTP = async (req, res) => {
     // Store OTP in database
     await pool.query(
       `INSERT INTO admission_otps (email, otp, expires_at) VALUES ($1, $2, $3)`,
-      [student_email, otp, expiresAt]
+      [finalEmail, otp, expiresAt]
     );
 
     // Send Email
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
-        <p>Dear ${student_name},</p>
+        <p>Dear ${finalName},</p>
         <p>Thank you for choosing IGCIM Computer Centre.</p>
         <p>To continue your admission process, please verify your email address using the OTP below:</p>
         <div style="text-align: center; background: #f4f4f4; padding: 15px; border-radius: 8px; margin: 20px 0;">
@@ -90,10 +100,10 @@ const sendAdmissionOTP = async (req, res) => {
       </div>
     `;
 
-    await sendEmail(student_email, 'Email Verification for Admission', emailHtml);
+    await sendEmail(finalEmail, 'Email Verification for Admission', emailHtml);
     
     // Log OTP for development
-    console.log(`\n📧 [ADMISSION OTP] ${student_email}: ${otp}\n`);
+    console.log(`\n📧 [ADMISSION OTP] ${finalEmail}: ${otp}\n`);
 
     return res.json({ success: true, message: 'OTP sent successfully' });
   } catch (error) {

@@ -105,10 +105,10 @@ app.get('/api/health', (req, res) => {
 // Error Handler
 // ============================
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
+  console.error("SERVER ERROR:", err);
   res.status(err.status || 500).json({
     success: false,
-    message: err.message || 'Internal server error',
+    message: err.message || "Internal server error"
   });
 });
 
