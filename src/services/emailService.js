@@ -1,8 +1,9 @@
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
+console.log(`[EmailService] Initializing transporter with host: ${process.env.SMTP_HOST || 'smtp.gmail.com'}, port: 587, family: 4`);
 const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
   port: 587,
   secure: false,
   auth: {
@@ -12,10 +13,9 @@ const transporter = nodemailer.createTransport({
   tls: {
     rejectUnauthorized: false
   },
-  connectionTimeout: 10000, 
-  greetingTimeout: 10000,
-  socketTimeout: 15000,
-  // Force IPv4 to avoid ENETUNREACH on IPv6-enabled environments
+  connectionTimeout: 15000, 
+  greetingTimeout: 15000,
+  socketTimeout: 20000,
   family: 4 
 });
 
