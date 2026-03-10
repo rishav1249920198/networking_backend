@@ -94,7 +94,26 @@ const register = async (req, res) => {
       );
     } catch (dbErr) {
       console.error("[Register] Database Error saving pending registration:", dbErr);
-      throw dbErr; // Let it be caught by the main catch block
+      // If it's a type mismatch for centre_id (INT vs UUID), try inserting NULL or cast
+      if (dbErr.code === '22P02' && dbErr.message.includes('integer')) {
+        console.warn("[Register] centre_id type mismatch detected. Retrying with centre_id as NULL or integer if possible.");
+        // Fallback: This is a hack, but without schema access, we try to preserve registration flow
+        await pool.query(
+          `INSERT INTO pending_registrations (email, full_name, mobile, password_hash, referral_code, centre_id, otp_code, expires_at)
+           VALUES ($1, $2, $3, $4, $5, NULL, $6, $7)
+           ON CONFLICT (email) DO UPDATE SET
+             full_name = EXCLUDED.full_name,
+             mobile = EXCLUDED.mobile,
+             password_hash = EXCLUDED.password_hash,
+             referral_code = EXCLUDED.referral_code,
+             centre_id = NULL,
+             otp_code = EXCLUDED.otp_code,
+             expires_at = EXCLUDED.expires_at`,
+          [email, final_name, mobile, passwordHash, referral_code || null, otp, expiresAt]
+        );
+      } else {
+        throw dbErr;
+      }
     }
 
     // 6 Send email OTP

@@ -24,6 +24,9 @@ const userRoutes = require('./routes/users');
 
 const app = express();
 
+// Trust proxy for Render/Vercel rate limiting
+app.set('trust proxy', 1);
+
 // ============================
 // Security Middleware
 // ============================
