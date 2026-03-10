@@ -98,7 +98,7 @@ const sendAdmissionOTP = async (req, res) => {
     return res.json({ success: true, message: 'OTP sent successfully' });
   } catch (error) {
     console.error('OTP ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Failed to send OTP' });
+    return res.status(500).json({ success: false, message: 'Failed to send OTP email: ' + (error.message || 'Unknown error') });
   }
 };
 

@@ -20,7 +20,12 @@ const register = async (req, res) => {
   const { full_name, email, mobile, password, referral_code, centre_id } = req.body;
 
   try {
-    // Check duplicate email/mobile
+    // 1 validate inputs
+    if (!full_name || !email || !mobile || !password) {
+      return res.status(400).json({ success: false, message: 'All fields are required.' });
+    }
+
+    // 2 check existing user
     const dupCheck = await pool.query(
       `SELECT id FROM users WHERE email = $1 OR mobile = $2`,
       [email, mobile]
@@ -46,12 +51,7 @@ const register = async (req, res) => {
     const roleResult = await pool.query(`SELECT id FROM roles WHERE name = 'student'`);
     const roleId = roleResult.rows[0].id;
 
-    // Get next sequence for system ID
-    const countResult = await pool.query(`SELECT COUNT(*) FROM users`);
-    const seq = parseInt(countResult.rows[0].count) + 1;
-    const systemId = generateSystemId('IGCIM', seq);
-
-    // Generate unique referral code
+    // 5 generate referral code
     let newReferralCode;
     let codeUnique = false;
     while (!codeUnique) {
@@ -60,6 +60,7 @@ const register = async (req, res) => {
       if (codeCheck.rows.length === 0) codeUnique = true;
     }
 
+    // 3 hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
     // Use provided centre_id or get first/default centre
@@ -69,33 +70,69 @@ const register = async (req, res) => {
       centreId = centreResult.rows[0]?.id;
     }
 
-    // Create user (unverified)
-    const userResult = await pool.query(
-      `INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile,
-                          password_hash, referral_code, referred_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING id, system_id, email, full_name`,
-      [systemId, centreId, roleId, full_name, email, mobile, passwordHash, newReferralCode, referredByUserId]
-    );
+    // 4 create user & 6 save user in database (with retry for system_id collisions)
+    let newUser;
+    let registered = false;
+    let attempts = 0;
+    while (!registered && attempts < 5) {
+      attempts++;
+      try {
+        const countResult = await pool.query(`SELECT COUNT(*) FROM users`);
+        const seq = parseInt(countResult.rows[0].count) + attempts; // Offset by attempts to handle race conditions
+        const systemId = generateSystemId('IGCIM', seq);
 
-    const newUser = userResult.rows[0];
+        const userResult = await pool.query(
+          `INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile,
+                              password_hash, referral_code, referred_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id, system_id, email, full_name`,
+          [systemId, centreId, roleId, full_name, email, mobile, passwordHash, newReferralCode, referredByUserId]
+        );
+        newUser = userResult.rows[0];
+        registered = true;
+      } catch (insertErr) {
+        if (insertErr.code === '23505' && insertErr.constraint === 'users_system_id_key' && attempts < 5) {
+          console.warn(`[Register] system_id collision, retrying (attempt ${attempts})...`);
+          continue;
+        }
+        throw insertErr;
+      }
+    }
 
-    // Send email OTP
-    await sendEmailOTP(email, 'register');
 
+    // Send email OTP with a timeout fallback to prevent registration hang
+    console.log(`[Register] Requesting OTP for ${email}...`);
+    
+    // Create a promise that resolves after 10 seconds as a fallback
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(() => {
+        console.warn(`[Register] Email sending taking too long for ${email}, continuing response...`);
+        resolve({ success: true, message: 'timeout_fallback' });
+      }, 10000);
+    });
+
+    // Race the actual email sending against the timeout
+    Promise.race([
+      sendEmailOTP(email, 'register'),
+      timeoutPromise
+    ]).then(result => {
+      if (result.success) {
+        console.log(`[Register] OTP process finished for ${email}`);
+      } else {
+        console.error(`[Register] OTP process failed for ${email}:`, result.message);
+      }
+    }).catch(err => {
+      console.error(`[Register] Background OTP error for ${email}:`, err);
+    });
+
+    // Return success response immediately while email process continues (or finishes)
     return res.status(201).json({
       success: true,
-      message: 'Registration successful. Please verify your email with the OTP sent.',
-      data: {
-        userId: newUser.id,
-        systemId: newUser.system_id,
-        email: newUser.email,
-        fullName: newUser.full_name,
-      },
+      message: 'Registration successful'
     });
-  } catch (err) {
-    console.error('Register error:', err);
-    return res.status(500).json({ success: false, message: 'Registration failed. Please try again.' });
+  } catch (error) {
+    console.error('REGISTER ERROR:', error);
+    return res.status(500).json({ success: false, message: 'Registration failed' });
   }
 };
 
@@ -339,4 +376,4 @@ const getMe = async (req, res) => {
   }
 };
 
-module.exports = { register, verifyEmailOTP, resendOTP, login, forgotPassword, resetPassword, getMe };
+module.exports = { register, verifyEmailOTP, resendOTP, requestLoginOTP, login, forgotPassword, resetPassword, getMe };

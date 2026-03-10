@@ -44,6 +44,7 @@ const sendEmailOTP = async (email, purpose) => {
 
   const subjectMap = {
     register: 'IGCIM - Email Verification OTP',
+    login: 'IGCIM - Login OTP',
     forgot_password: 'IGCIM - Password Reset OTP',
     mobile_verify: 'IGCIM - Mobile Verification OTP',
   };
@@ -68,12 +69,15 @@ const sendEmailOTP = async (email, purpose) => {
     </div>
   `;
 
-  await sendMail({ to: email, subject: subjectMap[purpose] || 'IGCIM OTP', html });
-
-  // Always log OTP to backend terminal so you can copy it during development
-  console.log(`\n🔐 OTP for ${email} [${purpose}]: ${otp}\n`);
-
-  return { success: true, message: 'OTP sent to email' };
+  try {
+    await sendMail({ to: email, subject: subjectMap[purpose] || 'IGCIM OTP', html });
+    // Always log OTP to backend terminal so you can copy it during development
+    console.log(`\n🔐 OTP for ${email} [${purpose}]: ${otp}\n`);
+    return { success: true, message: 'OTP sent to email' };
+  } catch (error) {
+    console.error('Email sending failed in OTP Service:', error);
+    return { success: false, message: 'Failed to send OTP email: ' + (error.message || 'Unknown error') };
+  }
 };
 
 /**

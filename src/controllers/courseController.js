@@ -38,7 +38,6 @@ const listCourses = async (req, res) => {
   }
 };
 
-// GET /api/courses/public (no auth needed for homepage)
 const listPublicCourses = async (req, res) => {
   try {
     const result = await pool.query(
@@ -47,6 +46,7 @@ const listPublicCourses = async (req, res) => {
        WHERE c.is_active = TRUE
        ORDER BY c.category, c.name`
     );
+    console.log("Courses fetched:", result.rows.length);
     return res.json({ success: true, data: result.rows });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch courses.' });

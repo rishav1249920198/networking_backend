@@ -1,16 +1,33 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: parseInt(process.env.SMTP_PORT) || 465,
+  secure: true, // Port 465 requires secure: true
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+  tls: {
+    rejectUnauthorized: false
+  }
+});
 
 const sendEmail = async (to, subject, html) => {
-  await resend.emails.send({
-    from: "IGCIM <onboarding@resend.dev>",
-    to,
-    subject,
-    html
-  });
+  console.log(`[EmailService] Attempting to send email to: ${to}, Subject: ${subject}`);
+  try {
+    const info = await transporter.sendMail({
+      from: `"IGCIM Computer Centre" <${process.env.SMTP_USER}>`,
+      to,
+      subject,
+      html
+    });
+    console.log(`[EmailService] Email sent successfully: ${info.messageId}`);
+  } catch (error) {
+    console.error(`[EmailService] Failed to send email to ${to}:`, error);
+    throw error;
+  }
 };
 
-// Aliased to prevent breaking other files that use sendTransactionalEmail
 module.exports = { sendEmail, sendTransactionalEmail: sendEmail };
