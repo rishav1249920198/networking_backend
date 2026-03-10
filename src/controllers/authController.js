@@ -73,65 +73,62 @@ const register = async (req, res) => {
       centreId = centreResult.rows[0]?.id;
     }
 
-    // 4 create user & 6 save user in database (with retry for system_id collisions)
-    let newUser;
-    let registered = false;
-    let attempts = 0;
-    while (!registered && attempts < 5) {
-      attempts++;
-      try {
-        const countResult = await pool.query(`SELECT COUNT(*) FROM users`);
-        const seq = parseInt(countResult.rows[0].count) + attempts; // Offset by attempts to handle race conditions
-        const systemId = generateSystemId('IGCIM', seq);
+    // 4 generate OTP
+    const otp = generateReferralCode('').slice(0, 6); // Simple random OTP or use generateOTP()
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-        const userResult = await pool.query(
-          `INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile,
-                              password_hash, referral_code, referred_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING id, system_id, email, full_name`,
-          [systemId, centreId, roleId, final_name, email, mobile, passwordHash, newReferralCode, referredByUserId]
-        );
-        newUser = userResult.rows[0];
-        registered = true;
-      } catch (insertErr) {
-        if (insertErr.code === '23505' && insertErr.constraint === 'users_system_id_key' && attempts < 5) {
-          console.warn(`[Register] system_id collision, retrying (attempt ${attempts})...`);
-          continue;
-        }
-        throw insertErr;
-      }
+    // 5 save to pending_registrations (with UPSERT logic using email)
+    await pool.query(
+      `INSERT INTO pending_registrations (email, full_name, mobile, password_hash, referral_code, centre_id, otp_code, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (email) DO UPDATE SET
+         full_name = EXCLUDED.full_name,
+         mobile = EXCLUDED.mobile,
+         password_hash = EXCLUDED.password_hash,
+         referral_code = EXCLUDED.referral_code,
+         centre_id = EXCLUDED.centre_id,
+         otp_code = EXCLUDED.otp_code,
+         expires_at = EXCLUDED.expires_at`,
+      [email, final_name, mobile, passwordHash, referral_code, centreId, otp, expiresAt]
+    );
+
+    // 6 Send email OTP
+    const subject = 'IGCIM - Email Verification OTP';
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; background: #f0f4ff; border-radius: 12px;">
+        <div style="text-align: center; margin-bottom: 20px;">
+          <h2 style="color: #0A2463; margin: 0;">IGCIM Computer Centre</h2>
+          <p style="color: #666; margin: 5px 0;">Educational Networking Platform</p>
+        </div>
+        <div style="background: white; border-radius: 10px; padding: 30px; text-align: center;">
+          <h3 style="color: #0A2463;">Your Verification Code</h3>
+          <div style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #00B4D8; margin: 20px 0;">
+            ${otp}
+          </div>
+          <p style="color: #666;">This OTP is valid for <strong>10 minutes</strong>.</p>
+          <p style="color: #999; font-size: 12px;">If you did not request this, please ignore this email.</p>
+        </div>
+        <p style="color: #999; font-size: 11px; text-align: center; margin-top: 15px;">
+          &copy; ${new Date().getFullYear()} IGCIM Computer Centre. All rights reserved.
+        </p>
+      </div>
+    `;
+
+    console.log(`[Register] Sending OTP ${otp} to ${email}...`);
+    try {
+      const { sendEmail } = require('../services/emailService');
+      await sendEmail(email, subject, html);
+      console.log(`[Register] OTP sent to ${email}`);
+    } catch (emailErr) {
+      console.error("[Register] EMAIL DELIVERY FAILED:", emailErr);
+      // We still return success:true but warn that OTP might be delayed if we want, 
+      // but the user wants "same fix need here" as admission, which returns false on failure.
+      return res.json({ success: false, message: "Failed to send OTP email" });
     }
 
-
-    // Send email OTP with a timeout fallback to prevent registration hang
-    console.log(`[Register] Requesting OTP for ${email}...`);
-    
-    // Create a promise that resolves after 10 seconds as a fallback
-    const timeoutPromise = new Promise((resolve) => {
-      setTimeout(() => {
-        console.warn(`[Register] Email sending taking too long for ${email}, continuing response...`);
-        resolve({ success: true, message: 'timeout_fallback' });
-      }, 10000);
-    });
-
-    // Race the actual email sending against the timeout
-    Promise.race([
-      sendEmailOTP(email, 'register'),
-      timeoutPromise
-    ]).then(result => {
-      if (result.success) {
-        console.log(`[Register] OTP process finished for ${email}`);
-      } else {
-        console.error(`[Register] OTP process failed for ${email}:`, result.message);
-      }
-    }).catch(err => {
-      console.error(`[Register] Background OTP error for ${email}:`, err);
-    });
-
-    // Return success response immediately while email process continues (or finishes)
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
-      message: 'Registration successful'
+      message: 'OTP sent to your email. Please verify to complete registration.'
     });
   } catch (error) {
     console.error('REGISTER ERROR:', error);
@@ -144,6 +141,70 @@ const verifyEmailOTP = async (req, res) => {
   const { email, otp } = req.body;
 
   try {
+    // Check pending registrations first
+    const pendingResult = await pool.query(
+      `SELECT * FROM pending_registrations WHERE email = $1 AND otp_code = $2 AND expires_at > NOW()`,
+      [email, otp]
+    );
+
+    if (pendingResult.rows.length > 0) {
+      const pending = pendingResult.rows[0];
+      
+      // Determine referred_by
+      let referredByUserId = null;
+      if (pending.referral_code) {
+        const refResult = await pool.query(
+          `SELECT id FROM users WHERE referral_code = $1 AND is_active = TRUE`,
+          [pending.referral_code.toUpperCase()]
+        );
+        referredByUserId = refResult.rows[0]?.id;
+      }
+
+      // Get role
+      const roleResult = await pool.query(`SELECT id FROM roles WHERE name = 'student'`);
+      const roleId = roleResult.rows[0].id;
+
+      // Create actual user
+      let newUser;
+      let attempts = 0;
+      let registered = false;
+      while(!registered && attempts < 5) {
+        attempts++;
+        try {
+          const countResult = await pool.query(`SELECT COUNT(*) FROM users`);
+          const seq = parseInt(countResult.rows[0].count) + attempts;
+          const systemId = generateSystemId('IGCIM', seq);
+          
+          let newReferralCode;
+          let codeUnique = false;
+          while (!codeUnique) {
+            newReferralCode = generateReferralCode('IGCIM');
+            const codeCheck = await pool.query(`SELECT id FROM users WHERE referral_code = $1`, [newReferralCode]);
+            if (codeCheck.rows.length === 0) codeUnique = true;
+          }
+
+          const userResult = await pool.query(
+            `INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile,
+                                password_hash, referral_code, referred_by, is_email_verified)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE)
+             RETURNING id, system_id, email`,
+            [systemId, pending.centre_id, roleId, pending.full_name, pending.email, pending.mobile, pending.password_hash, newReferralCode, referredByUserId]
+          );
+          newUser = userResult.rows[0];
+          registered = true;
+        } catch(e) {
+            if (e.code === '23505' && attempts < 5) continue;
+            throw e;
+        }
+      }
+
+      // Delete from pending
+      await pool.query(`DELETE FROM pending_registrations WHERE email = $1`, [email]);
+
+      return res.json({ success: true, message: 'Email verified and account created successfully!' });
+    }
+
+    // Fallback for existing users (like mobile verify or login otp)
     const result = await verifyOTP(email, otp, 'register');
     if (!result.valid) {
       return res.status(400).json({ success: false, message: result.message });
@@ -154,7 +215,7 @@ const verifyEmailOTP = async (req, res) => {
       [email]
     );
 
-    return res.json({ success: true, message: 'Email verified successfully. You can now login.' });
+    return res.json({ success: true, message: 'Email verified successfully.' });
   } catch (err) {
     console.error('Verify OTP error:', err);
     return res.status(500).json({ success: false, message: 'Verification failed.' });
@@ -165,10 +226,14 @@ const verifyEmailOTP = async (req, res) => {
 const resendOTP = async (req, res) => {
   const { email, purpose } = req.body;
   try {
-    await sendEmailOTP(email, purpose || 'register');
+    const result = await sendEmailOTP(email, purpose || 'register');
+    if (!result.success) {
+      return res.json({ success: false, message: "Failed to send OTP email" });
+    }
     return res.json({ success: true, message: 'OTP resent to email.' });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to send OTP.' });
+    console.error("RESEND OTP ERROR:", err);
+    return res.json({ success: false, message: 'Failed to send OTP.' });
   }
 };
 
@@ -185,9 +250,9 @@ const requestLoginOTP = async (req, res) => {
     const result = await sendEmailOTP(email, 'login');
 
     if (!result.success) {
-      return res.status(429).json({
+      return res.json({
         success: false,
-        message: result.message || 'Please wait before requesting a new OTP.',
+        message: result.message || 'Failed to send OTP email',
       });
     }
 
@@ -197,7 +262,7 @@ const requestLoginOTP = async (req, res) => {
     });
   } catch (err) {
     console.error('Request login OTP error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to send OTP.' });
+    return res.json({ success: false, message: 'Failed to send OTP.' });
   }
 };
 
@@ -322,11 +387,14 @@ const forgotPassword = async (req, res) => {
       // Don't reveal if email exists
       return res.json({ success: true, message: 'If this email is registered, you will receive an OTP.' });
     }
-    await sendEmailOTP(email, 'forgot_password');
+    const otpResult = await sendEmailOTP(email, 'forgot_password');
+    if (!otpResult.success) {
+      return res.json({ success: false, message: "Failed to send OTP email" });
+    }
     return res.json({ success: true, message: 'OTP sent to your email address.' });
   } catch (err) {
     console.error('Forgot Password Error:', err);
-    return res.status(500).json({ success: false, message: err.message || 'Failed to send OTP.' });
+    return res.json({ success: false, message: 'Failed to send OTP.' });
   }
 };
 
