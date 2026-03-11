@@ -2,7 +2,7 @@ const pool = require('../config/db');
 const { validateReferral } = require('../services/referralValidator');
 const { generateCommission } = require('../services/commissionEngine');
 const AdmissionService = require('../services/AdmissionService');
-const { sendEmail, sendTransactionalEmail } = require('../services/emailService');
+const { sendEmail } = require("../services/emailService");
 const { generateOTP, generateSystemId, generateReferralCode } = require('../utils/generators');
 const bcrypt = require('bcryptjs');
 
@@ -108,23 +108,18 @@ const sendAdmissionOTP = async (req, res) => {
     `;
 
     console.log(`[AdmissionOTP] Sending email to ${finalEmail}...`);
-    try {
-      await sendEmail(finalEmail, 'Email Verification for Admission', emailHtml);
-      console.log(`[AdmissionOTP] Email sent to ${finalEmail}.`);
-    } catch (emailErr) {
-      console.error('[AdmissionOTP] Email delivery failed:', emailErr);
-      // We still return 500 but with more details
-      throw new Error('Email delivery failed: ' + emailErr.message);
-    }
+    sendEmail(finalEmail, 'Email Verification for Admission', emailHtml)
+      .then(() => console.log(`[AdmissionOTP] Email sent to ${finalEmail}.`))
+      .catch(emailErr => console.error('[AdmissionOTP] Email delivery failed:', emailErr));
     
     // Log OTP for development
     console.log(`\n📧 [ADMISSION OTP] ${finalEmail}: ${otp}\n`);
 
     return res.json({ success: true, message: 'OTP sent successfully' });
-    } catch (error) {
-      console.error("SMTP EMAIL ERROR:", error);
-      return res.json({ success: false, message: "Failed to send OTP email" });
-    }
+  } catch (error) {
+    console.error("OTP REQUEST ERROR:", error);
+    return res.status(500).json({ success: false, message: "Failed to process OTP request" });
+  }
 };
 
 

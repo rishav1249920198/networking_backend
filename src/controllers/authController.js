@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { signToken } = require('../utils/jwt');
 const { generateSystemId, generateReferralCode } = require('../utils/generators');
 const { sendEmailOTP, verifyOTP } = require('../services/otpService');
+const { sendEmail } = require("../services/emailService");
 
 // Helper: log activity
 const logActivity = async (actorId, actorRole, action, targetType, targetId, metadata, ip) => {
@@ -115,14 +116,9 @@ const register = async (req, res) => {
     `;
 
     console.log(`[Register] Attempting to send OTP ${otp} to ${email}...`);
-    try {
-      const { sendEmail } = require('../services/emailService');
-      await sendEmail(email, subject, html);
-      console.log(`[Register] OTP successfully sent to ${email}`);
-    } catch (emailErr) {
-      console.error("SMTP EMAIL ERROR:", emailErr);
-      return res.json({ success: false, message: "Failed to send OTP email" });
-    }
+    sendEmail(email, subject, html)
+      .then(() => console.log(`[Register] OTP successfully sent to ${email}`))
+      .catch(emailErr => console.error("[Register] SMTP EMAIL ERROR:", emailErr));
 
     return res.status(200).json({
       success: true,
