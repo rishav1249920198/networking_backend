@@ -30,24 +30,39 @@ class AdmissionService {
          student_id = userCheck.rows[0].id;
       } else {
          const roleRes = await dbClient.query(`SELECT id FROM roles WHERE name = 'student'`);
-         const countRes = await dbClient.query(`SELECT COUNT(*) FROM users`);
-         const sysId = generateSystemId('IGCIM', parseInt(countRes.rows[0].count) + 1);
          const passHash = await bcrypt.hash(student_mobile.toString(), 10);
          
+         let sysId;
+         let uniqueSysId = false;
+         while (!uniqueSysId) {
+            const lastUser = await dbClient.query('SELECT system_id FROM users ORDER BY created_at DESC LIMIT 1');
+            let nextNum = 1;
+            if (lastUser.rows.length > 0 && lastUser.rows[0].system_id) {
+               const currentId = lastUser.rows[0].system_id;
+               const numericPart = currentId.replace('IGCIM', '');
+               nextNum = parseInt(numericPart) + 1;
+            }
+            sysId = `IGCIM${String(nextNum).padStart(4, '0')}`;
+            
+            const check = await dbClient.query(`SELECT id FROM users WHERE system_id = $1`, [sysId]);
+            if (check.rows.length === 0) uniqueSysId = true;
+         }
+
          let newRefCode;
-         let unique = false;
-         while(!unique) {
+         let uniqueRef = false;
+         while(!uniqueRef) {
            newRefCode = generateReferralCode('IGCIM');
            const check = await dbClient.query(`SELECT id FROM users WHERE referral_code = $1`, [newRefCode]);
-           if (check.rows.length === 0) unique = true;
+           if (check.rows.length === 0) uniqueRef = true;
          }
 
          const newUser = await dbClient.query(
            `INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile, password_hash, referral_code)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, system_id`,
            [sysId, centre_id, roleRes.rows[0].id, student_name, student_email, student_mobile, passHash, newRefCode]
          );
          student_id = newUser.rows[0].id;
+         console.log(`User created with system_id: ${newUser.rows[0].system_id}`);
       }
     }
 
@@ -127,6 +142,7 @@ class AdmissionService {
     ];
 
     const admResult = await dbClient.query(insertSQL, insertParams);
+    console.log("Admission created successfully");
     return admResult.rows[0];
   }
 }

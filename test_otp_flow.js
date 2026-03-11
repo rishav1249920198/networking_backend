@@ -9,6 +9,12 @@ async function runTests() {
   const testEmail = 'testotp@igcim.app';
 
   try {
+    // 0. Course Lookup
+    const courseRes = await pool.query('SELECT id FROM courses LIMIT 1');
+    if (courseRes.rows.length === 0) throw new Error('No courses found in database');
+    const courseId = courseRes.rows[0].id;
+    console.log(`✅ Using Course ID: ${courseId}`);
+
     // 1. Send OTP Request
     console.log('1. Requesting OTP...');
     const res1 = await request(app)
@@ -16,7 +22,8 @@ async function runTests() {
       .send({
         student_name: 'Test Student',
         student_email: testEmail,
-        student_mobile: '9999999999'
+        student_mobile: '9999999999',
+        course_id: courseId
       });
     
     if (!res1.body.success) {
@@ -29,10 +36,6 @@ async function runTests() {
     const otpRes = await pool.query('SELECT otp FROM admission_otps WHERE email = $1 ORDER BY created_at DESC LIMIT 1', [testEmail]);
     otpCode = otpRes.rows[0].otp;
     console.log(`✅ Extracted OTP: ${otpCode}`);
-
-    // 3. Fake course lookup
-    const courseRes = await pool.query('SELECT id FROM courses LIMIT 1');
-    const courseId = courseRes.rows[0].id;
 
     // 4. Verify and Admit Reuqest
     console.log('3. Requesting verification & admission...');
