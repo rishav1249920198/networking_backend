@@ -21,18 +21,18 @@ const resolveIpv4 = (hostname) => {
 
 const sendEmail = async (to, subject, html) => {
   // Use Port 465 (SSL) as it's often more stable on cloud platforms
-  const host = "smtp.gmail.com";
-  const port = 465; 
+  const host = process.env.SMTP_HOST || "smtp.gmail.com";
+  const port = parseInt(process.env.SMTP_PORT) || 465; 
 
   try {
     // Resolve host to IP to force IPv4 connection
     const ip = await resolveIpv4(host);
-    console.log(`Connecting to SMTP server: ${host} (${ip}) on port ${port} (SSL)...`);
+    console.log(`Connecting to SMTP server: ${host} (${ip}) on port ${port} (SSL: ${port === 465})...`);
 
     const transporter = nodemailer.createTransport({
       host: ip, 
       port: port,
-      secure: true, // Use SSL for port 465
+      secure: port === 465, // Use SSL for port 465
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
