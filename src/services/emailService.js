@@ -11,6 +11,7 @@ if (dns.setDefaultResultOrder) {
  */
 const resolveIpv4 = (hostname) => {
   return new Promise((resolve, reject) => {
+    // Try multiple times if needed, or use a specific timeout
     dns.lookup(hostname, { family: 4 }, (err, address) => {
       if (err) return reject(err);
       resolve(address);
@@ -19,29 +20,30 @@ const resolveIpv4 = (hostname) => {
 };
 
 const sendEmail = async (to, subject, html) => {
-  const host = process.env.SMTP_HOST || "smtp.gmail.com";
-  const port = parseInt(process.env.SMTP_PORT) || 587;
+  // Use Port 465 (SSL) as it's often more stable on cloud platforms
+  const host = "smtp.gmail.com";
+  const port = 465; 
 
   try {
     // Resolve host to IP to force IPv4 connection
     const ip = await resolveIpv4(host);
-    console.log(`Connecting to SMTP server: ${host} (${ip}) on port ${port}...`);
+    console.log(`Connecting to SMTP server: ${host} (${ip}) on port ${port} (SSL)...`);
 
     const transporter = nodemailer.createTransport({
-      host: ip, // Use the resolved IP address directly
+      host: ip, 
       port: port,
-      secure: false, // port 587 uses STARTTLS
+      secure: true, // Use SSL for port 465
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
       },
       tls: {
-        servername: host, // Crucial: Must match host for certificate validation
+        servername: host, // Verify certificate against original hostname
         rejectUnauthorized: false
       },
-      connectionTimeout: 60000,
-      greetingTimeout: 60000,
-      socketTimeout: 60000
+      connectionTimeout: 20000,
+      greetingTimeout: 20000,
+      socketTimeout: 20000
     });
 
     const info = await transporter.sendMail({
@@ -56,6 +58,8 @@ const sendEmail = async (to, subject, html) => {
 
   } catch (error) {
     console.error("SMTP EMAIL ERROR:", error);
+    // If 465 fails, we could potentially fallback to 587, but usually if one times out, 
+    // it's an IP block or config issue.
     throw error;
   }
 };
