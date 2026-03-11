@@ -1,20 +1,24 @@
 const nodemailer = require("nodemailer");
+const dns = require("dns");
+
+// Force IPv4 DNS resolution - prevents ENETUNREACH errors on IPv6-only/restricted environments like Render
+dns.setDefaultResultOrder("ipv4first");
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp.gmail.com",
-  port: process.env.SMTP_PORT || 587,
-  secure: false,
+  port: parseInt(process.env.SMTP_PORT) || 587,
+  secure: process.env.SMTP_PORT == 465,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS
   },
+  family: 4,
   tls: {
     rejectUnauthorized: false
   },
-  family: 4,
-  connectionTimeout: 20000,
-  greetingTimeout: 20000,
-  socketTimeout: 20000
+  connectionTimeout: 30000,
+  greetingTimeout: 30000,
+  socketTimeout: 30000
 });
 
 const sendEmail = async (to, subject, html) => {
