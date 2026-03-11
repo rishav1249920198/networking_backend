@@ -9,6 +9,10 @@ const transporter = nodemailer.createTransport({
   port: parseInt(process.env.SMTP_PORT) || 587,
   secure: false,
   family: 4,
+  // Force IPv4 lookup
+  lookup: (hostname, options, callback) => {
+    dns.lookup(hostname, { family: 4 }, callback);
+  },
 
   auth: {
     user: process.env.SMTP_USER,
@@ -27,8 +31,6 @@ const transporter = nodemailer.createTransport({
 const sendEmail = async (to, subject, html) => {
   try {
     console.log("Connecting to SMTP server...");
-
-    await transporter.verify();
 
     const info = await transporter.sendMail({
       from: `"IGCIM Computer Centre" <${process.env.SMTP_USER}>`,
