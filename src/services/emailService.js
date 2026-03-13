@@ -35,7 +35,10 @@ const sendEmail = async (to, subject, html) => {
       
       // Force IPv4 at the DNS resolution level inside Nodemailer
       lookup: (hostname, options, callback) => {
-        dns.lookup(hostname, { family: 4 }, callback);
+        dns.lookup(hostname, { family: 4 }, (err, address, family) => {
+          console.log(`[DNS DEBUG] Resolved ${hostname} to ${address} (v${family})`);
+          callback(err, address, family);
+        });
       },
       
       debug: true, 
@@ -46,9 +49,9 @@ const sendEmail = async (to, subject, html) => {
         // Ensure servername is set for certificate validation when using custom lookup
         servername: host
       },
-      connectionTimeout: 15000, // Increased to 15s
-      greetingTimeout: 15000,
-      socketTimeout: 20000
+      connectionTimeout: 20000, // Increased to 20s
+      greetingTimeout: 20000,
+      socketTimeout: 30000
     });
 
     console.log(`Transporter initialized. Mode: ${port === 465 ? 'SSL' : 'STARTTLS'}. Sending mail...`);
@@ -71,6 +74,7 @@ const sendEmail = async (to, subject, html) => {
     console.error("Response:", error.response);
     if (error.code === 'ETIMEDOUT') {
       console.error("HELP: Connection timed out. This usually means Port " + port + " is blocked by Render's firewall or Gmail is throttling the IP.");
+      console.error("FIX: Please change SMTP_PORT to 587 in your Render Dashboard.");
     }
     console.error(`--- SMTP ATTEMPT END ---\n`);
     
