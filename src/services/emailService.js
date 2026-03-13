@@ -2,53 +2,56 @@ const nodemailer = require("nodemailer");
 const dns = require("dns");
 
 /**
- * Robust Email Service with detailed Logging and IPv4 forcing
+ * Robust Email Service with detailed Logging and Strict IPv4 forcing
  */
 
-// Force DNS resolution order globally for this process
+// Force DNS resolution order globally
 if (dns.setDefaultResultOrder) {
   dns.setDefaultResultOrder("ipv4first");
 }
 
 const sendEmail = async (to, subject, html) => {
   const host = process.env.SMTP_HOST || "smtp.gmail.com";
-  // Default to 465 if not specified, user mentioned 587 didn't work.
+  // Default to 465 (SSL) but strongly recommend 587 (STARTTLS) for Render
   const port = parseInt(process.env.SMTP_PORT) || 465; 
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
 
   console.log(`\n--- SMTP ATTEMPT START ---`);
   console.log(`Target: ${host}:${port} (SSL: ${port === 465})`);
-  console.log(`User: ${user}`);
+  console.log(`Time: ${new Date().toISOString()}`);
 
   try {
-    // We use the hostname directly but force family: 4 to avoid IPv6 issues on Render.
-    // This is more reliable than manual IP resolution as it preserves TLS certificate validation.
     const transporter = nodemailer.createTransport({
       host: host,
       port: port,
-      secure: port === 465, // SSL for 465
+      secure: port === 465, // SSL for 465, false for 587
       auth: {
         user: user,
         pass: pass
       },
-      // IMPORTANT: Force IPv4 to avoid ENETUNREACH/ECONNREFUSED on Render's IPv6 interface
+      // Force IPv4 at the connection level
       family: 4, 
       
-      // Enable logging to see the full SMTP handshake in production
+      // Force IPv4 at the DNS resolution level inside Nodemailer
+      lookup: (hostname, options, callback) => {
+        dns.lookup(hostname, { family: 4 }, callback);
+      },
+      
       debug: true, 
       logger: true,
       
       tls: {
-        // Do not fail on invalid certs, but we expect Gmail cert to be valid anyway.
-        rejectUnauthorized: false
+        rejectUnauthorized: false,
+        // Ensure servername is set for certificate validation when using custom lookup
+        servername: host
       },
-      connectionTimeout: 10000, // 10s
-      greetingTimeout: 10000,
-      socketTimeout: 15000
+      connectionTimeout: 15000, // Increased to 15s
+      greetingTimeout: 15000,
+      socketTimeout: 20000
     });
 
-    console.log(`Transporter initialized. Sending mail...`);
+    console.log(`Transporter initialized. Mode: ${port === 465 ? 'SSL' : 'STARTTLS'}. Sending mail...`);
 
     const info = await transporter.sendMail({
       from: `"IGCIM Computer Centre" <${user}>`,
@@ -63,10 +66,12 @@ const sendEmail = async (to, subject, html) => {
 
   } catch (error) {
     console.error("\n❌ SMTP DELIVERY FAILED");
+    console.error("Stage:", error.command || 'CONNECTION');
     console.error("Code:", error.code);
-    console.error("Command:", error.command);
     console.error("Response:", error.response);
-    console.error("Stack Trace:", error.stack);
+    if (error.code === 'ETIMEDOUT') {
+      console.error("HELP: Connection timed out. This usually means Port " + port + " is blocked by Render's firewall or Gmail is throttling the IP.");
+    }
     console.error(`--- SMTP ATTEMPT END ---\n`);
     
     throw error;
