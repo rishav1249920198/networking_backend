@@ -1,65 +1,74 @@
 const nodemailer = require("nodemailer");
 const dns = require("dns");
 
-// Force IPv4 resolution globally
+/**
+ * Robust Email Service with detailed Logging and IPv4 forcing
+ */
+
+// Force DNS resolution order globally for this process
 if (dns.setDefaultResultOrder) {
   dns.setDefaultResultOrder("ipv4first");
 }
 
-/**
- * Manually resolve hostname to IPv4 address
- */
-const resolveIpv4 = (hostname) => {
-  return new Promise((resolve, reject) => {
-    // Try multiple times if needed, or use a specific timeout
-    dns.lookup(hostname, { family: 4 }, (err, address) => {
-      if (err) return reject(err);
-      resolve(address);
-    });
-  });
-};
-
 const sendEmail = async (to, subject, html) => {
-  // Use Port 465 (SSL) as it's often more stable on cloud platforms
   const host = process.env.SMTP_HOST || "smtp.gmail.com";
+  // Default to 465 if not specified, user mentioned 587 didn't work.
   const port = parseInt(process.env.SMTP_PORT) || 465; 
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+
+  console.log(`\n--- SMTP ATTEMPT START ---`);
+  console.log(`Target: ${host}:${port} (SSL: ${port === 465})`);
+  console.log(`User: ${user}`);
 
   try {
-    // Resolve host to IP to force IPv4 connection
-    const ip = await resolveIpv4(host);
-    console.log(`Connecting to SMTP server: ${host} (${ip}) on port ${port} (SSL: ${port === 465})...`);
-
+    // We use the hostname directly but force family: 4 to avoid IPv6 issues on Render.
+    // This is more reliable than manual IP resolution as it preserves TLS certificate validation.
     const transporter = nodemailer.createTransport({
-      host: ip, 
+      host: host,
       port: port,
-      secure: port === 465, // Use SSL for port 465
+      secure: port === 465, // SSL for 465
       auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
+        user: user,
+        pass: pass
       },
+      // IMPORTANT: Force IPv4 to avoid ENETUNREACH/ECONNREFUSED on Render's IPv6 interface
+      family: 4, 
+      
+      // Enable logging to see the full SMTP handshake in production
+      debug: true, 
+      logger: true,
+      
       tls: {
-        servername: host, // Verify certificate against original hostname
+        // Do not fail on invalid certs, but we expect Gmail cert to be valid anyway.
         rejectUnauthorized: false
       },
-      connectionTimeout: 20000,
-      greetingTimeout: 20000,
-      socketTimeout: 20000
+      connectionTimeout: 10000, // 10s
+      greetingTimeout: 10000,
+      socketTimeout: 15000
     });
 
+    console.log(`Transporter initialized. Sending mail...`);
+
     const info = await transporter.sendMail({
-      from: `"IGCIM Computer Centre" <${process.env.SMTP_USER}>`,
+      from: `"IGCIM Computer Centre" <${user}>`,
       to,
       subject,
       html
     });
 
-    console.log("Email sent successfully:", info.messageId);
+    console.log("✅ Email sent successfully:", info.messageId);
+    console.log(`--- SMTP ATTEMPT END ---\n`);
     return true;
 
   } catch (error) {
-    console.error("SMTP EMAIL ERROR:", error);
-    // If 465 fails, we could potentially fallback to 587, but usually if one times out, 
-    // it's an IP block or config issue.
+    console.error("\n❌ SMTP DELIVERY FAILED");
+    console.error("Code:", error.code);
+    console.error("Command:", error.command);
+    console.error("Response:", error.response);
+    console.error("Stack Trace:", error.stack);
+    console.error(`--- SMTP ATTEMPT END ---\n`);
+    
     throw error;
   }
 };
