@@ -1,4 +1,7 @@
 
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
+
 process.on('uncaughtException', (err) => {
   console.error('🔴 UNCAUGHT EXCEPTION:', err);
 });
