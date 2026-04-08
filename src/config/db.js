@@ -1,3 +1,6 @@
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
+
 const { Pool } = require('pg');
 require('dotenv').config();
 
