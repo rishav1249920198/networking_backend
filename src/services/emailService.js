@@ -1,94 +1,84 @@
-const nodemailer = require("nodemailer");
+const axios = require("axios");
 
 /**
- * Email Service using Brevo SMTP
- * For local development
+ * Email Service using Brevo HTTP API
+ * Render free tier blocks SMTP ports (25, 465, 587)
+ * so we use Brevo's REST API over HTTPS instead.
  */
 
-// Create a reusable transporter
-let transporter = null;
-
-const getTransporter = () => {
-  if (transporter) return transporter;
-
-  const host = process.env.SMTP_HOST || "smtp-relay.brevo.com";
-  const port = parseInt(process.env.SMTP_PORT) || 587;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-
-  transporter = nodemailer.createTransport({
-    host: host,
-    port: port,
-    secure: port === 465,
-    auth: {
-      user: user,
-      pass: pass
-    },
-    tls: {
-      rejectUnauthorized: false,
-      servername: host
-    },
-    family: 4, // Force IPv4 (Render cannot reach IPv6)
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000
-  });
-
-  return transporter;
-};
+const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
 
 /**
- * Verify SMTP connection on startup
- * Logs success/failure to the terminal
+ * Verify Brevo API key on startup
  */
 const verifyEmailService = async () => {
-  const host = process.env.SMTP_HOST || "smtp-relay.brevo.com";
-  const port = parseInt(process.env.SMTP_PORT) || 587;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const fromEmail = process.env.SMTP_FROM || user;
+  const apiKey = process.env.BREVO_API_KEY;
+  const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER;
 
-  if (!user || !pass) {
-    console.error(`❌ Email Service Mising Credentials! Set SMTP_USER and SMTP_PASS in .env`);
+  if (!apiKey) {
+    console.error(`❌ Email Service: BREVO_API_KEY not set in environment variables`);
+    return false;
+  }
+
+  if (!fromEmail) {
+    console.error(`❌ Email Service: SMTP_FROM not set in environment variables`);
     return false;
   }
 
   try {
-    const t = getTransporter();
-    await t.verify();
-    console.log(`✅ Email Service Ready`);
+    // Test the API key by fetching account info
+    const res = await axios.get("https://api.brevo.com/v3/account", {
+      headers: { "api-key": apiKey },
+      timeout: 10000,
+    });
+    console.log(`✅ Email Service Ready (Brevo HTTP API)`);
     return true;
   } catch (error) {
-    console.error(`❌ Email Service Failed to Connect: ${error.message}`);
+    console.error(`❌ Email Service Failed: ${error.message}`);
     return false;
   }
 };
 
+/**
+ * Send email via Brevo HTTP API
+ */
 const sendEmail = async (to, subject, html) => {
-  // SMTP_FROM = verified sender email in Brevo
-  // SMTP_USER = Brevo login (just for authentication, NOT the sender)
+  const apiKey = process.env.BREVO_API_KEY;
   const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER;
 
-  try {
-    const t = getTransporter();
+  if (!apiKey) {
+    throw new Error("BREVO_API_KEY is not configured");
+  }
 
-    const info = await t.sendMail({
-      from: `"IGCIM Computer Centre" <${fromEmail}>`,
-      to,
-      subject,
-      html
-    });
+  try {
+    const response = await axios.post(
+      BREVO_API_URL,
+      {
+        sender: {
+          name: "IGCIM Computer Centre",
+          email: fromEmail,
+        },
+        to: [{ email: to }],
+        subject: subject,
+        htmlContent: html,
+      },
+      {
+        headers: {
+          "accept": "application/json",
+          "content-type": "application/json",
+          "api-key": apiKey,
+        },
+        timeout: 15000,
+      }
+    );
 
     return true;
-
   } catch (error) {
-    console.error("\n❌ SMTP DELIVERY FAILED");
-    console.error("Stage:", error.command || 'CONNECTION');
-    console.error("Code:", error.code);
-    console.error("Response:", error.response);
-    console.error("Message:", error.message);
-    console.error(`--- SMTP ATTEMPT END ---\n`);
-    
+    console.error("\n❌ BREVO API DELIVERY FAILED");
+    console.error("Status:", error.response?.status);
+    console.error("Error:", error.response?.data?.message || error.message);
+    console.error(`--- EMAIL ATTEMPT END ---\n`);
+
     throw error;
   }
 };
