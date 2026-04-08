@@ -1,20 +1,6 @@
 
-// Force ALL DNS lookups to IPv4 only (Render cannot reach IPv6)
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
-const originalLookup = dns.lookup;
-dns.lookup = function (hostname, options, callback) {
-  if (typeof options === 'function') {
-    callback = options;
-    options = {};
-  }
-  if (typeof options === 'number') {
-    options = { family: options };
-  }
-  if (!options) options = {};
-  options.family = 4; // Force IPv4
-  return originalLookup.call(this, hostname, options, callback);
-};
 
 process.on('uncaughtException', (err) => {
   console.error('🔴 UNCAUGHT EXCEPTION:', err);
