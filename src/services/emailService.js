@@ -28,6 +28,7 @@ const getTransporter = () => {
       rejectUnauthorized: false,
       servername: host
     },
+    family: 4, // Force IPv4 (Render cannot reach IPv6)
     connectionTimeout: 30000,
     greetingTimeout: 30000,
     socketTimeout: 30000
