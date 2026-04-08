@@ -20,11 +20,11 @@ const getStudents = async (req, res) => {
         u.is_active,
         u.created_at,
         ref.full_name AS referred_by_name,
-        (SELECT COUNT(*) FROM users inv WHERE inv.referred_by = u.id)::int AS total_referrals
+        (SELECT COUNT(DISTINCT inv.id) FROM users inv WHERE inv.referred_by = u.id)::int AS total_referrals
       FROM users u
       JOIN roles ro ON ro.id = u.role_id
       LEFT JOIN users ref ON ref.id = u.referred_by
-      WHERE ro.name = 'student' ${centreFilter}
+      WHERE ro.name IN ('student', 'co-admin') ${centreFilter}
       ORDER BY u.created_at DESC
       LIMIT $1 OFFSET $2
     `;
@@ -32,7 +32,7 @@ const getStudents = async (req, res) => {
       SELECT COUNT(*)
       FROM users u
       JOIN roles ro ON ro.id = u.role_id
-      WHERE ro.name = 'student' ${centreFilter}
+      WHERE ro.name IN ('student', 'co-admin') ${centreFilter}
     `;
 
     const result = await pool.query(query, [limit, offset]);
@@ -80,7 +80,7 @@ const getPendingReferrals = async (req, res) => {
       FROM users u
       JOIN roles ro ON ro.id = u.role_id
       JOIN users ref ON ref.id = u.referred_by
-      WHERE ro.name = 'student'
+      WHERE ro.name IN ('student', 'co-admin')
         AND u.referred_by IS NOT NULL
         -- exclude if already has an approved admission (commission already handled)
         AND NOT EXISTS (
@@ -95,7 +95,7 @@ const getPendingReferrals = async (req, res) => {
       SELECT COUNT(*)
       FROM users u
       JOIN roles ro ON ro.id = u.role_id
-      WHERE ro.name = 'student'
+      WHERE ro.name IN ('student', 'co-admin')
         AND u.referred_by IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM admissions a

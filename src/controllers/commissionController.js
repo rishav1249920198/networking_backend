@@ -1,5 +1,9 @@
 const pool = require('../config/db');
+const axios = require('axios');
 const { sendEmail } = require('../services/emailService');
+const { logAudit } = require('../services/auditService');
+const { createNotification, notifyAdmins } = require('../services/notificationService');
+
 
 // GET /api/commissions  (Student sees own; Admin sees centre; SuperAdmin sees all)
 const listCommissions = async (req, res) => {
@@ -125,9 +129,18 @@ const requestWithdrawal = async (req, res) => {
       [student_id]
     );
 
-    if (parseFloat(balance.rows[0].available) < parseFloat(amount)) {
+    const available = parseFloat(balance.rows[0].available);
+    if (available <= 0) {
+      console.warn(`[Withdrawal] Attempt by ${student_id} with zero balance.`);
+      return res.status(400).json({ success: false, message: 'No commission available' });
+    }
+
+    if (available < parseFloat(amount)) {
+      console.warn(`[Withdrawal] Attempt by ${student_id} for ₹${amount} with insufficient balance ₹${available}.`);
       return res.status(400).json({ success: false, message: 'Insufficient available balance.' });
     }
+
+
 
     const result = await pool.query(
       `INSERT INTO withdrawal_requests (student_id, centre_id, amount, upi_id, bank_account, bank_ifsc, bank_name)
@@ -149,13 +162,49 @@ const requestWithdrawal = async (req, res) => {
             <p>Best regards<br>IGCIM Computer Centre</p>
           </div>
         `;
-        sendEmail(student.email, 'Withdrawal Request Received', emailHtml).then(() => {
-            console.log("Withdrawal request email sent");
-        }).catch(e => console.error("SMTP EMAIL ERROR:", e));
+        sendEmail(student.email, 'Withdrawal Request Received', emailHtml).catch(e => console.error("SMTP EMAIL ERROR:", e));
+
+        // Notify Admins
+        const adminRes = await pool.query(
+          `SELECT email FROM users u 
+           JOIN roles r ON u.role_id = r.id 
+           WHERE r.name IN ('admin', 'super_admin') 
+           AND (u.centre_id = $1 OR r.name = 'super_admin')`,
+          [centre_id]
+        );
+        const uniqueEmails = [...new Set(adminRes.rows.map(r => r.email))];
+        uniqueEmails.forEach(adminEmail => {
+          const adminHtml = `
+            <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+              <p>Hello Admin,</p>
+              <p>A new withdrawal request has been submitted.</p>
+              <ul>
+                <li><strong>Student Name:</strong> ${student.full_name}</li>
+                <li><strong>Amount:</strong> ₹${amount}</li>
+                <li><strong>Payment Method:</strong> ${upi_id ? 'UPI' : 'Bank Transfer'}</li>
+              </ul>
+              <p>Please log in to the admin dashboard to review and approve/reject this request.</p>
+              <p>IGCIM System Alert</p>
+            </div>
+          `;
+          sendEmail(adminEmail, 'New Commission Withdrawal Request', adminHtml).catch(e => console.error("Admin withdrawal email error:", e));
+        });
       }
     } catch (e) {
       console.error("Failed to fetch student for withdrawal email:", e);
     }
+
+    // NEW: Notify Admins
+    const studentRes = await pool.query('SELECT full_name FROM users WHERE id = $1', [student_id]);
+    const studentName = studentRes.rows[0]?.full_name || 'A student';
+    
+    await notifyAdmins(
+      'New Withdrawal Request 💰',
+      `${studentName} has requested a withdrawal of ₹${amount}.`,
+      'withdrawal_request',
+      '/dashboard/admin/payouts',
+      centre_id
+    );
 
     return res.status(201).json({
       success: true,
@@ -163,6 +212,7 @@ const requestWithdrawal = async (req, res) => {
       data: result.rows[0],
     });
   } catch (err) {
+    console.error('Withdrawal error:', err);
     return res.status(500).json({ success: false, message: 'Failed to submit withdrawal.' });
   }
 };
@@ -177,7 +227,10 @@ const listWithdrawals = async (req, res) => {
     let where = 'WHERE 1=1';
     const params = [];
 
-    if (role !== 'super_admin') {
+    if (role === 'student') {
+      params.push(req.user.id);
+      where += ` AND w.student_id = $${params.length}`;
+    } else if (role !== 'super_admin') {
       params.push(centre_id);
       where += ` AND w.centre_id = $${params.length}`;
     }
@@ -231,7 +284,7 @@ const updateWithdrawalStatus = async (req, res) => {
     const wRes = await pool.query(
       `UPDATE withdrawal_requests 
        SET status = $1, admin_notes = $2, reviewed_by = $3, reviewed_at = NOW()
-       WHERE id = $4 RETURNING student_id, amount`,
+       WHERE id = $4 RETURNING *`,
       [status, admin_notes, adminId, id]
     );
 
@@ -239,24 +292,36 @@ const updateWithdrawalStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Withdrawal request not found.' });
     }
 
+    // Secure Audit Log
+    await logAudit(
+      adminId,
+      id,
+      `withdrawal_status_${status}`,
+      `Withdrawal converted to ${status}. Amount: ${wRes.rows[0].amount}. Admin notes: ${admin_notes || 'None'}`,
+      req.ip
+    );
+
     // Send Approval Email
-    if (status === 'approved') {
+    if (['approved', 'paid'].includes(status)) {
         try {
           const { student_id, amount } = wRes.rows[0];
           const studentRes = await pool.query('SELECT email, full_name FROM users WHERE id = $1', [student_id]);
+          
           if (studentRes.rows.length > 0) {
             const student = studentRes.rows[0];
+            
+            // Send Approval Email
             const emailHtml = `
               <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
                 <p>Dear ${student.full_name},</p>
-                <p>Your withdrawal request has been approved by IGCIM Computer Centre.</p>
-                <p>The withdrawal amount will be transferred to your registered UPI ID within 24 hours.</p>
+                <p>Your withdrawal request has been <strong>approved</strong> by IGCIM Computer Centre.</p>
+                <p>The withdrawal amount of ₹${parseFloat(amount).toLocaleString()} will be transferred to your registered payment method within 24 hours.</p>
                 <p>If the amount is not received within this timeframe, please contact support.</p>
                 <p>Best regards<br>IGCIM Computer Centre</p>
               </div>
             `;
             sendEmail(student.email, 'Withdrawal Approved', emailHtml).then(() => {
-                console.log("Withdrawal approval email sent");
+
             }).catch(e => console.error("SMTP EMAIL ERROR:", e));
           }
         } catch (e) {
@@ -279,12 +344,31 @@ const updateWithdrawalStatus = async (req, res) => {
               </div>
             `;
             sendEmail(student.email, 'Withdrawal Request Update', emailHtml).then(() => {
-                console.log("Withdrawal rejected email sent");
+
             }).catch(e => console.error("SMTP EMAIL ERROR:", e));
           }
         } catch (e) {
             console.error("Failed to fetch student for withdrawal rejection email:", e);
         }
+    }
+
+    // NEW: Notify Student
+    if (['approved', 'paid', 'rejected'].includes(status)) {
+        const studentRes = await pool.query('SELECT student_id, amount FROM withdrawal_requests WHERE id = $1', [id]);
+        const { student_id, amount } = studentRes.rows[0];
+        
+        let title = 'Withdrawal Update';
+        let msg = `Your withdrawal request for ₹${amount} has been updated to ${status}.`;
+        
+        if (status === 'approved' || status === 'paid') {
+            title = 'Withdrawal Successful! ✅';
+            msg = `Your withdrawal of ₹${amount} has been processed and sent.`;
+        } else if (status === 'rejected') {
+            title = 'Withdrawal Rejected ❌';
+            msg = `Your withdrawal of ₹${amount} was not approved. ${admin_notes ? `Reason: ${admin_notes}` : ''}`;
+        }
+        
+        await createNotification(student_id, title, msg, 'withdrawal_update', '/dashboard/student/earnings');
     }
 
     return res.json({ success: true, message: `Withdrawal request marked as ${status}.` });
@@ -294,4 +378,11 @@ const updateWithdrawalStatus = async (req, res) => {
   }
 };
 
-module.exports = { listCommissions, getEarningsSummary, requestWithdrawal, listWithdrawals, updateWithdrawalStatus };
+
+module.exports = { 
+  listCommissions, 
+  getEarningsSummary, 
+  requestWithdrawal, 
+  listWithdrawals, 
+  updateWithdrawalStatus
+};

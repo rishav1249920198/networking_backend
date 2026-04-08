@@ -7,10 +7,10 @@ const getStudentDashboard = async (req, res) => {
     const [referrals, commissions, admissions] = await Promise.all([
       pool.query(
         `SELECT
-          COUNT(*) AS total,
-          COUNT(CASE WHEN a.status='pending' THEN 1 END) AS pending,
-          COUNT(CASE WHEN a.status='approved' THEN 1 END) AS approved,
-          COUNT(CASE WHEN a.status='rejected' THEN 1 END) AS rejected
+          COUNT(DISTINCT u.id) AS total,
+          COUNT(DISTINCT CASE WHEN a.status='pending' THEN u.id END) AS pending,
+          COUNT(DISTINCT CASE WHEN a.status='approved' THEN u.id END) AS approved,
+          COUNT(DISTINCT CASE WHEN a.status='rejected' THEN u.id END) AS rejected
          FROM users u
          LEFT JOIN admissions a ON a.student_id = u.id
          WHERE u.referred_by = $1`,
@@ -65,45 +65,79 @@ const getAdminDashboard = async (req, res) => {
     const [admStats, commStats, userStats, recentAdm] = await Promise.all([
       pool.query(
         `SELECT
-          COUNT(*) AS total,
-          COUNT(CASE WHEN status='pending' THEN 1 END) AS pending,
-          COUNT(CASE WHEN status='approved' THEN 1 END) AS approved,
-          COUNT(CASE WHEN status='rejected' THEN 1 END) AS rejected
+          COUNT(*)::int AS total,
+          COUNT(CASE WHEN status='pending' THEN 1 END)::int AS pending,
+          COUNT(CASE WHEN status='approved' THEN 1 END)::int AS approved,
+          COUNT(CASE WHEN status='rejected' THEN 1 END)::int AS rejected
          FROM admissions a WHERE 1=1 ${centreFilter}`
       ),
       pool.query(
         `SELECT
-          COALESCE(SUM(amount), 0) AS total_commissions,
-          COUNT(*) AS total_count,
-          COUNT(CASE WHEN status='pending' THEN 1 END) AS pending_count
+          COALESCE(SUM(amount), 0)::numeric AS total_commissions,
+          COUNT(*)::int AS total_count,
+          COUNT(CASE WHEN status='pending' THEN 1 END)::int AS pending_count
          FROM commissions c WHERE 1=1 ${centreFilter.replace(/a\./g, 'c.')}`
       ),
       pool.query(
-        `SELECT COUNT(*) AS total_students
+        `SELECT COUNT(*)::int AS total_students
          FROM users u
          JOIN roles r ON r.id = u.role_id
          WHERE r.name = 'student' ${role !== 'super_admin' ? `AND u.centre_id = '${centre_id}'` : ''}`
       ),
       pool.query(
         `SELECT a.id, a.student_name, a.status, a.snapshot_fee, a.admission_mode,
-                a.created_at, co.name AS course
+                a.created_at, co.name AS course_name
          FROM admissions a JOIN courses co ON co.id = a.course_id
          WHERE 1=1 ${centreFilter}
          ORDER BY a.created_at DESC LIMIT 10`
       ),
     ]);
 
-    // Monthly commission trend (last 6 months)
-    const monthlyComm = await pool.query(
-      `SELECT TO_CHAR(created_at, 'Mon') AS month,
-              DATE_TRUNC('month', created_at) AS month_date,
-              COALESCE(SUM(amount), 0) AS amount,
-              COUNT(*) AS count
-       FROM commissions
-       WHERE created_at >= NOW() - INTERVAL '6 months'
-       ${centreFilter.replace(/a\./g, '')}
-       GROUP BY month, month_date ORDER BY month_date`
+    // Monthly Margin Trend (Revenue vs Commission - last 6 months)
+    const monthlyData = await pool.query(
+      `WITH dates AS (
+         SELECT generate_series(
+           DATE_TRUNC('month', NOW() - INTERVAL '5 months'),
+           DATE_TRUNC('month', NOW()),
+           '1 month'::interval
+         ) AS month_date
+       )
+       SELECT 
+         TO_CHAR(d.month_date, 'Mon') AS month,
+         COALESCE((SELECT SUM(amount) FROM commissions c WHERE DATE_TRUNC('month', c.created_at) = d.month_date ${centreFilter.replace(/a\./g, 'c.')}), 0) AS commission_paid,
+         COALESCE((SELECT SUM(snapshot_fee) FROM admissions a WHERE status = 'approved' AND DATE_TRUNC('month', a.created_at) = d.month_date ${centreFilter}), 0) AS revenue_collected
+       FROM dates d
+       ORDER BY d.month_date`
     );
+
+    // Course Popularity (Counting all enrollment attempts for popularity)
+    const popularCourses = await pool.query(
+      `SELECT co.name AS name, COUNT(a.id)::int AS count
+       FROM courses co
+       JOIN admissions a ON a.course_id = co.id
+       WHERE 1=1 ${centreFilter}
+       GROUP BY co.id, co.name
+       ORDER BY count DESC
+       LIMIT 5`
+    );
+
+    // Center Performance (Super-Admin only)
+    let centerPerformance = [];
+    if (role === 'super_admin') {
+      const cpRes = await pool.query(
+        `SELECT ce.name AS name, COALESCE(SUM(a.snapshot_fee), 0) AS revenue
+         FROM centres ce
+         LEFT JOIN admissions a ON a.centre_id = ce.id AND a.status = 'approved'
+         GROUP BY ce.id, ce.name
+         ORDER BY revenue DESC`
+      );
+      centerPerformance = cpRes.rows;
+    }
+
+    // Conversion Rate & Efficiency
+    const totalLeads = parseInt(admStats.rows[0].total) || 1;
+    const approvedCount = parseInt(admStats.rows[0].approved) || 0;
+    const conversionRate = ((approvedCount / totalLeads) * 100).toFixed(1);
 
     return res.json({
       success: true,
@@ -112,7 +146,10 @@ const getAdminDashboard = async (req, res) => {
         commissions: commStats.rows[0],
         students: userStats.rows[0],
         recentAdmissions: recentAdm.rows,
-        monthlyCommissions: monthlyComm.rows,
+        monthlyMetrics: monthlyData.rows,
+        popularCourses: popularCourses.rows,
+        centerPerformance,
+        conversionRate
       },
     });
   } catch (err) {
@@ -127,9 +164,9 @@ const getDashboardStats = async (req, res) => {
 
   try {
     const [referrals, leads, admissions, commissions] = await Promise.all([
-      pool.query(`SELECT COUNT(*) AS total_referrals FROM users WHERE referred_by = $1`, [userId]),
-      pool.query(`SELECT COUNT(*) AS total_leads FROM admissions WHERE referred_by_user_id = $1 AND status = 'pending'`, [userId]),
-      pool.query(`SELECT COUNT(*) AS total_admissions FROM admissions WHERE referred_by_user_id = $1 AND status = 'approved'`, [userId]),
+      pool.query(`SELECT COUNT(DISTINCT id) AS total_referrals FROM users WHERE referred_by = $1`, [userId]),
+      pool.query(`SELECT COUNT(DISTINCT id) AS total_leads FROM admissions WHERE referred_by_user_id = $1 AND status = 'pending'`, [userId]),
+      pool.query(`SELECT COUNT(DISTINCT id) AS total_admissions FROM admissions WHERE referred_by_user_id = $1 AND status = 'approved'`, [userId]),
       pool.query(`SELECT COALESCE(SUM(amount), 0) AS total_commission FROM commissions WHERE referrer_id = $1`, [userId])
     ]);
 

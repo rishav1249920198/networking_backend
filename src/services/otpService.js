@@ -71,8 +71,7 @@ const sendEmailOTP = async (email, purpose) => {
 
   try {
     await sendMail({ to: email, subject: subjectMap[purpose] || 'IGCIM OTP', html });
-    // Always log OTP to backend terminal so you can copy it during development
-    console.log(`\n🔐 OTP for ${email} [${purpose}]: ${otp}\n`);
+    // OTP sent successfully — do not log OTP values in production
     return { success: true, message: 'OTP sent to email' };
   } catch (error) {
     console.error('SMTP EMAIL ERROR:', error);

@@ -2,6 +2,7 @@ const pool = require('../config/db');
 const { validateReferral } = require('./referralValidator');
 const bcrypt = require('bcryptjs');
 const { generateSystemId, generateReferralCode } = require('../utils/generators');
+const { sendEmail } = require('./emailService');
 
 class AdmissionService {
   /**
@@ -62,7 +63,6 @@ class AdmissionService {
            [sysId, centre_id, roleRes.rows[0].id, student_name, student_email, student_mobile, passHash, newRefCode]
          );
          student_id = newUser.rows[0].id;
-         console.log(`User created with system_id: ${newUser.rows[0].system_id}`);
       }
     }
 
@@ -90,29 +90,32 @@ class AdmissionService {
       }
     }
 
-    // 3. Process Referral Code
+    // 3. Process Referral Code (NON-BLOCKING)
     let referredByUserId = null;
     if (referral_code) {
-      const refResult = await dbClient.query(
-        `SELECT id FROM users WHERE referral_code = $1 AND is_active = TRUE`,
-        [referral_code.toUpperCase()]
-      );
-      if (refResult.rows.length === 0) {
-        throw new Error('Invalid referral code.');
-      }
-      referredByUserId = refResult.rows[0].id;
+      try {
+        const refResult = await dbClient.query(
+          `SELECT id FROM users WHERE referral_code = $1 AND is_active = TRUE`,
+          [referral_code.toUpperCase()]
+        );
+        if (refResult.rows.length === 0) {
+          console.warn(`[AdmissionService] Invalid referral code used: ${referral_code}`);
+        } else {
+          referredByUserId = refResult.rows[0].id;
 
-      if (admission_mode === 'online' && referredByUserId === student_id) {
-        throw new Error('You cannot use your own referral code.');
-      }
-
-      if (admission_mode === 'online') {
-        if (student_id) {
-          const validation = await validateReferral(referredByUserId, student_id);
-          if (!validation.valid) {
-            throw new Error(validation.message);
+          if (admission_mode === 'online' && referredByUserId === student_id) {
+            console.warn('[AdmissionService] Self-referral attempt blocked.');
+            referredByUserId = null;
+          } else if (admission_mode === 'online' && student_id) {
+            const validation = await validateReferral(referredByUserId, student_id);
+            if (!validation.valid) {
+              console.warn(`[AdmissionService] Referral validation failed: ${validation.message}`);
+              referredByUserId = null;
+            }
           }
         }
+      } catch (err) {
+        console.error('[AdmissionService] Referral validation error:', err);
       }
     }
 
@@ -142,7 +145,61 @@ class AdmissionService {
     ];
 
     const admResult = await dbClient.query(insertSQL, insertParams);
-    console.log("Admission created successfully");
+
+    // Send Background Notification Emails
+    (async () => {
+      try {
+        // 1. Referral Pending Alert (to referrer)
+        if (referredByUserId) {
+          const referrerRes = await dbClient.query('SELECT full_name, email FROM users WHERE id = $1', [referredByUserId]);
+          if (referrerRes.rows.length > 0) {
+            const referrer = referrerRes.rows[0];
+            const refHtml = `
+              <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+                <p>Hello <strong>${referrer.full_name}</strong>,</p>
+                <p>Great news! Someone just submitted an admission application using your referral code.</p>
+                <p><strong>Student Name:</strong> ${student_name || 'N/A'}</p>
+                <p>Once the centre administrator approves their admission, your commission will be calculated and credited to your IGCIM wallet automatically.</p>
+                <p>Keep referring and earning!</p>
+                <p>Best regards,<br>IGCIM Computer Centre</p>
+              </div>
+            `;
+            sendEmail(referrer.email, 'Pending Commission - New Referral!', refHtml).catch(e => console.error("Referral email error:", e));
+          }
+        }
+
+        // 2. Admin Notification
+        const adminRes = await dbClient.query(
+          `SELECT email FROM users u 
+           JOIN roles r ON u.role_id = r.id 
+           WHERE r.name IN ('admin', 'super_admin') 
+           AND (u.centre_id = $1 OR r.name = 'super_admin')`,
+          [centre_id]
+        );
+        const uniqueEmails = [...new Set(adminRes.rows.map(r => r.email))];
+        
+        uniqueEmails.forEach(adminEmail => {
+          const adminHtml = `
+            <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+              <p>Hello Admin,</p>
+              <p>A new admission application has been submitted and is pending your review.</p>
+              <ul>
+                <li><strong>Student Name:</strong> ${student_name || 'N/A'}</li>
+                <li><strong>Mobile:</strong> ${student_mobile || 'N/A'}</li>
+                <li><strong>Course ID:</strong> ${course_id}</li>
+                <li><strong>Mode:</strong> ${admission_mode}</li>
+              </ul>
+              <p>Please log in to the admin dashboard to review and approve/reject this application.</p>
+              <p>IGCIM System Alert</p>
+            </div>
+          `;
+          sendEmail(adminEmail, 'New Admission Request Submitted', adminHtml).catch(e => console.error("Admin notification email error:", e));
+        });
+      } catch (err) {
+        console.error("Failed to send admission notification emails:", err);
+      }
+    })();
+
     return admResult.rows[0];
   }
 }

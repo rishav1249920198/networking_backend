@@ -1,14 +1,16 @@
+
 const pool = require('./src/config/db');
 
-async function fixDb() {
+async function fix() {
   try {
-    await pool.query(`ALTER TABLE admissions ALTER COLUMN student_id DROP NOT NULL;`);
-    console.log("student_id column in admissions is now nullable.");
-  } catch(e) {
-    console.error(e);
+    console.log('Resetting partner_certificate_url for rishavk051@gmail.com...');
+    await pool.query("UPDATE users SET partner_certificate_url = NULL WHERE email = 'rishavk051@gmail.com'");
+    console.log('✅ SUCCESS');
+  } catch (err) {
+    console.error('❌ ERROR:', err);
   } finally {
-    pool.end();
+    process.exit(0);
   }
 }
 
-fixDb();
+fix();

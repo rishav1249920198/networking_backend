@@ -8,7 +8,7 @@ router.get('/summary', authenticate, getEarningsSummary);
 router.post('/withdraw', authenticate, requestWithdrawal);
 
 // Admin & Co-Admin
-router.get('/withdrawals', authenticate, requireCoAdminOrAdmin, listWithdrawals);
+router.get('/withdrawals', authenticate, listWithdrawals);
 router.patch('/withdrawals/:id/status', authenticate, requireCoAdminOrAdmin, updateWithdrawalStatus);
 
 module.exports = router;

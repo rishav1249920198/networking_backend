@@ -5,6 +5,8 @@ const AdmissionService = require('../services/AdmissionService');
 const { sendEmail } = require("../services/emailService");
 const { generateOTP, generateSystemId, generateReferralCode } = require('../utils/generators');
 const bcrypt = require('bcryptjs');
+const { logAudit } = require('../services/auditService');
+const { createNotification, notifyAdmins } = require('../services/notificationService');
 
 // POST /api/admissions/online
 const createOnlineAdmission = async (req, res) => {
@@ -16,6 +18,16 @@ const createOnlineAdmission = async (req, res) => {
       payment_proof_path: req.file ? req.file.path : null,
       admission_mode: 'online'
     });
+ 
+    // NEW: Notify Admins
+    await notifyAdmins(
+      'New Admission Alert 🔔',
+      `${req.body.student_name || req.user.full_name} has submitted an admission request. Review Required.`,
+      'admission_request',
+      '/dashboard/admin',
+      req.user.centre_id
+    );
+
     return res.status(201).json({
       success: true,
       message: 'Admission submitted successfully. Pending admin approval.',
@@ -61,7 +73,7 @@ const createPublicAdmission = async (req, res) => {
 
 // POST /api/admissions/request-otp
 const sendAdmissionOTP = async (req, res) => {
-  console.log("OTP REQUEST BODY:", req.body);
+
   const { student_name, name, student_email, email, student_mobile, mobile, course_id, course } = req.body;
   
   const finalEmail = student_email || email;
@@ -80,13 +92,13 @@ const sendAdmissionOTP = async (req, res) => {
 
   try {
     // Store OTP in database
-    console.log(`[AdmissionOTP] Storing OTP for ${finalEmail}...`);
+
     try {
       await pool.query(
         `INSERT INTO admission_otps (email, otp, expires_at) VALUES ($1, $2, $3)`,
         [finalEmail, otp, expiresAt]
       );
-      console.log(`[AdmissionOTP] OTP stored successfully.`);
+
     } catch (dbErr) {
       console.error('[AdmissionOTP] Database storage failed:', dbErr);
       throw new Error('Database error during OTP storage: ' + dbErr.message);
@@ -107,13 +119,8 @@ const sendAdmissionOTP = async (req, res) => {
       </div>
     `;
 
-    console.log(`[AdmissionOTP] Sending email to ${finalEmail}...`);
     sendEmail(finalEmail, 'Email Verification for Admission', emailHtml)
-      .then(() => console.log(`[AdmissionOTP] Email sent to ${finalEmail}.`))
       .catch(emailErr => console.error('[AdmissionOTP] Email delivery failed:', emailErr));
-    
-    // Log OTP for development
-    console.log(`\n📧 [ADMISSION OTP] ${finalEmail}: ${otp}\n`);
 
     return res.json({ success: true, message: 'OTP sent successfully' });
   } catch (error) {
@@ -197,7 +204,7 @@ const verifyAndCreateAdmission = async (req, res) => {
         [sysId, defaultCentreId, roleRes.rows[0].id, student_name, student_email, student_mobile, passHash, generatedRefCode]
       );
       student_id = newUser.rows[0].id;
-      console.log(`User created with system_id: ${newUser.rows[0].system_id}`);
+
     }
 
     // 4. Create Admission using AdmissionService
@@ -245,15 +252,46 @@ const verifyAndCreateAdmission = async (req, res) => {
           </div>
         `;
         // Send email asynchronously without blocking the response
-        sendEmail(student_email, 'Your Admission is Successfully Completed', successEmailHtml).then(() => {
-            console.log("Admission success email sent");
-        }).catch(e => console.error("SMTP EMAIL ERROR:", e));
+        sendEmail(student_email, 'Your Admission is Successfully Completed', successEmailHtml)
+          .catch(e => console.error("SMTP EMAIL ERROR:", e));
     }
 
+
+    // NEW: Generate tokens for immediate login
+    const { signToken, signRefreshToken } = require('../utils/jwt');
+    const token = signToken({ userId: student_id, role: 'student' });
+    const refreshToken = signRefreshToken({ userId: student_id, role: 'student' });
+    
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+
+    await logAudit(student_id, student_id, 'otp_verified', `User verified and admitted: ${student_email}`, req.ip);
+
+    // Fetch user details for the response
+    const userDetail = await client.query('SELECT system_id, referral_code, centre_id FROM users WHERE id = $1', [student_id]);
+    const user = userDetail.rows[0];
 
     return res.status(201).json({
       success: true,
       message: 'Admission submitted and verified successfully.',
+      data: {
+        token,
+        user: {
+          id: student_id,
+          systemId: user.system_id,
+          fullName: student_name,
+          email: student_email,
+          mobile: student_mobile,
+          role: 'student',
+          centreId: user.centre_id,
+          referralCode: user.referral_code,
+        }
+      }
     });
 
   } catch (err) {
@@ -314,6 +352,12 @@ const approveAdmission = async (req, res) => {
       return res.status(400).json({ success: false, message: `Admission is already ${adm.rows[0].status}.` });
     }
 
+    const admData = await client.query(
+      `SELECT a.student_id, a.referred_by_user_id, a.student_name, co.name AS course_name, a.centre_id
+       FROM admissions a JOIN courses co ON co.id = a.course_id WHERE a.id = $1`,
+      [id]
+    );
+
     // Approve
     await client.query(
       `UPDATE admissions SET status = 'approved', reviewed_by_id = $1, reviewed_at = NOW(), updated_at = NOW()
@@ -331,6 +375,33 @@ const approveAdmission = async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    // Secure Audit Log
+    await logAudit(
+      adminId,
+      id,
+      'admission_approved',
+      `Admin approved admission. Commission Result: ${commResult.message}`,
+      req.ip
+    );
+
+    if (admData.rows[0].student_id) {
+        await createNotification(
+          admData.rows[0].student_id,
+          'Admission Approved! 🎉',
+          `Congratulations! Your admission for ${admData.rows[0].course_name} has been approved. Welcome aboard!`,
+          'admission_update'
+        );
+    }
+    
+    if (admData.rows[0].referred_by_user_id) {
+        await createNotification(
+          admData.rows[0].referred_by_user_id,
+          'Referral Confirmed! ✅',
+          `Good news! Your referral ${admData.rows[0].student_name} was approved. Your commission has been credited.`,
+          'commission_credit'
+        );
+    }
 
     return res.json({
       success: true,
@@ -363,6 +434,54 @@ const rejectAdmission = async (req, res) => {
        rejection_reason = $2, updated_at = NOW() WHERE id = $3`,
       [adminId, rejection_reason, id]
     );
+
+    const admData = await pool.query(
+      `SELECT a.student_id, a.student_name, a.student_email, co.name AS course_name FROM admissions a 
+       JOIN courses co ON co.id = a.course_id WHERE a.id = $1`, [id]
+    );
+
+    const studentInfo = admData.rows[0];
+
+    // 1. Create In-App Notification
+    if (studentInfo?.student_id) {
+        await createNotification(
+          studentInfo.student_id,
+          'Admission Update ⚠️',
+          `Your admission request for ${studentInfo.course_name} was not approved. Reason: ${rejection_reason || 'Please contact support.'}`,
+          'admission_update'
+        );
+    }
+
+    // 2. Send Rejection Email
+    if (studentInfo?.student_email) {
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+          <div style="background-color: #0A2463; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
+            <h1 style="color: #fff; margin: 0;">Admission Update</h1>
+          </div>
+          <div style="padding: 30px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 8px 8px;">
+            <p>Dear <strong>${studentInfo.student_name || 'Student'}</strong>,</p>
+            <p>Thank you for your interest in joining <strong>IGCIM Computer Centre</strong>.</p>
+            <p>We are writing to inform you that your admission application for the course <strong>${studentInfo.course_name}</strong> has not been approved at this time.</p>
+            
+            <div style="background-color: #fff4f4; border-left: 4px solid #f44336; padding: 15px; margin: 20px 0;">
+              <p style="margin: 0; color: #d32f2f; font-weight: bold;">Reason for Rejection:</p>
+              <p style="margin: 5px 0 0;">${rejection_reason || "Details not specified. Please contact center support for more information."}</p>
+            </div>
+
+            <p>If you believe this is a mistake or have already addressed the issue above, please feel free to reach out to our support team or visit our center.</p>
+            
+            <p style="margin-top: 30px;">Best regards,<br><strong>IGCIM Admission Team</strong></p>
+          </div>
+          <p style="text-align: center; font-size: 12px; color: #999; margin-top: 20px;">
+            This is an automated message. Please do not reply directly to this email.
+          </p>
+        </div>
+      `;
+
+      sendEmail(studentInfo.student_email, 'Update Regarding Your Admission Application', emailHtml)
+        .catch(err => console.error("Failed to send rejection email:", err));
+    }
 
     return res.json({ success: true, message: 'Admission rejected.' });
   } catch (err) {

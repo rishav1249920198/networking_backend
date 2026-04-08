@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { sendEmail } = require('./emailService');
 
 /**
  * Generate commission for an approved admission.
@@ -96,6 +97,32 @@ const generateCommission = async (admissionId, client = pool) => {
       );
     }
   }
+
+  // Send "Commission Earned" Alert Asynchronously
+  (async () => {
+    try {
+      const userRes = await client.query('SELECT full_name, email FROM users WHERE id = $1', [adm.referred_by_user_id]);
+      if (userRes.rows.length > 0) {
+        const user = userRes.rows[0];
+        const earnHtml = `
+          <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+            <p>Congratulations <strong>${user.full_name}</strong>!</p>
+            <p>Your referral's admission has just been approved by the centre administrator.</p>
+            <div style="background: #e6f7ff; padding: 15px; border-left: 4px solid #1890ff; margin: 20px 0;">
+              <h2 style="color: #0A2463; margin: 0;">₹${amount} Credited!</h2>
+              <p style="margin: 5px 0 0 0; color: #555;">Level 1 Commission</p>
+            </div>
+            <p>This amount has been added to your IGCIM Commission Wallet and is now available for withdrawal.</p>
+            <p>Log in to your dashboard to view your total earnings and request a payout.</p>
+            <p>Keep up the great work!<br>IGCIM Computer Centre</p>
+          </div>
+        `;
+        sendEmail(user.email, 'Earned: New Commission Credited!', earnHtml).catch(e => console.error("Commission earned email error:", e));
+      }
+    } catch (e) {
+       console.error("Failed to send commission notification:", e);
+    }
+  })();
 
   return { generated: true, amount, message: 'Commission generated successfully' };
 };
