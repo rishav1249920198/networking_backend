@@ -365,7 +365,7 @@ const updateWithdrawalStatus = async (req, res) => {
         const { student_id, amount } = studentRes.rows[0];
         
         let title = 'Withdrawal Update';
-        let msg = `Your withdrawal request for ₹${amount} has been updated to ${status}.`;
+        let msg = `Your withdrawal request for ${amount} IC has been updated to ${status}.`;
         
         if (status === 'approved' || status === 'paid') {
             title = 'Withdrawal Successful! ✅';

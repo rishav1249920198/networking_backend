@@ -51,15 +51,21 @@ const generateCommission = async (admissionId, client = pool) => {
 
   const settings = settingsResult.rows[0] || { multi_level: false };
 
+  // Get global conversion rate for scaling
+  const convResult = await client.query(
+    "SELECT setting_value FROM system_settings WHERE setting_key = 'ic_conversion_rate'"
+  );
+  const conversionRate = parseFloat(convResult.rows[0]?.setting_value || '1.0');
+
   // Calculate Level 1 commission amount
-  // If the course had a flat IC commission set, use it. Otherwise compute percentage.
+  // If the course had a flat IC commission set, use it. Otherwise compute scaled percentage.
   let amount = 0;
   if (adm.snapshot_commission_ic !== null && adm.snapshot_commission_ic !== undefined) {
     amount = parseFloat(adm.snapshot_commission_ic);
   } else {
-    amount = parseFloat(
-      ((adm.snapshot_fee * adm.snapshot_commission_percent) / 100).toFixed(2)
-    );
+    // scale IC based on conversion rate so that (IC * rate) = (Fee * Percent / 100)
+    const inrValue = (parseFloat(adm.snapshot_fee) * parseFloat(adm.snapshot_commission_percent)) / 100;
+    amount = parseFloat((inrValue / conversionRate).toFixed(2));
   }
 
   // Insert Level 1 commission
@@ -85,9 +91,8 @@ const generateCommission = async (admissionId, client = pool) => {
     );
 
     if (referrerResult.rows[0]?.referred_by && settings.level_2_percent > 0) {
-      const l2Amount = parseFloat(
-        ((adm.snapshot_fee * settings.level_2_percent) / 100).toFixed(2)
-      );
+      const l2InrValue = (parseFloat(adm.snapshot_fee) * parseFloat(settings.level_2_percent)) / 100;
+      const l2Amount = parseFloat((l2InrValue / conversionRate).toFixed(2));
       await client.query(
         `INSERT INTO commissions
           (admission_id, referrer_id, centre_id, snapshot_fee, snapshot_percent, amount, level, status)

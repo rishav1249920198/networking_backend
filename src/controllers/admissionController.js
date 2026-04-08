@@ -631,7 +631,7 @@ const adminEnrollAndApprove = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: `Enrollment approved! ${commResult.generated ? `Commission ₹${commResult.amount} generated for referrer.` : commResult.message}`,
+      message: `Enrollment approved! ${commResult.generated ? `Commission ${commResult.amount} IC generated for referrer.` : commResult.message}`,
       data: { admissionId, commission: commResult },
     });
   } catch (err) {
