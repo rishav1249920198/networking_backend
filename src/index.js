@@ -38,8 +38,8 @@ const notificationRoutes = require('./routes/notifications');
 
 const app = express();
 
-// Trust proxy (disabled for local development)
-// app.set('trust proxy', 1);
+// Trust proxy for Render
+app.set('trust proxy', 1);
 
 // ============================
 // Security Middleware
@@ -128,7 +128,12 @@ app.use('/api/users', userRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', require('./routes/admin'));
 
-// Health check
+// Root health check (Render sends HEAD / for health checks)
+app.get('/', (req, res) => {
+  res.status(200).json({ success: true, message: 'IGCIM API is running' });
+});
+
+// API health check
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,

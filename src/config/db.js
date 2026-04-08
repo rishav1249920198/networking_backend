@@ -29,7 +29,7 @@ pool.connect()
   .catch((err) => {
     console.error('⚠️  Could not connect to Supabase PostgreSQL:', err.message);
     console.error('   Check your DATABASE_URL in the .env file.');
-    throw new Error('Database connection failed: ' + err.message);
+    console.error('   The server will continue running and retry on incoming requests.');
   });
 
 module.exports = pool;
