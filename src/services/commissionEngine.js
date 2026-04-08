@@ -11,7 +11,7 @@ const generateCommission = async (admissionId, client = pool) => {
   // Fetch admission with referral info
   const admResult = await client.query(
     `SELECT a.id, a.referred_by_user_id, a.centre_id,
-            a.snapshot_fee, a.snapshot_commission_percent,
+            a.snapshot_fee, a.snapshot_commission_percent, a.snapshot_commission_ic,
             a.status
      FROM admissions a
      WHERE a.id = $1`,
@@ -52,9 +52,15 @@ const generateCommission = async (admissionId, client = pool) => {
   const settings = settingsResult.rows[0] || { multi_level: false };
 
   // Calculate Level 1 commission amount
-  const amount = parseFloat(
-    ((adm.snapshot_fee * adm.snapshot_commission_percent) / 100).toFixed(2)
-  );
+  // If the course had a flat IC commission set, use it. Otherwise compute percentage.
+  let amount = 0;
+  if (adm.snapshot_commission_ic !== null && adm.snapshot_commission_ic !== undefined) {
+    amount = parseFloat(adm.snapshot_commission_ic);
+  } else {
+    amount = parseFloat(
+      ((adm.snapshot_fee * adm.snapshot_commission_percent) / 100).toFixed(2)
+    );
+  }
 
   // Insert Level 1 commission
   await client.query(
@@ -109,7 +115,7 @@ const generateCommission = async (admissionId, client = pool) => {
             <p>Congratulations <strong>${user.full_name}</strong>!</p>
             <p>Your referral's admission has just been approved by the centre administrator.</p>
             <div style="background: #e6f7ff; padding: 15px; border-left: 4px solid #1890ff; margin: 20px 0;">
-              <h2 style="color: #0A2463; margin: 0;">₹${amount} Credited!</h2>
+              <h2 style="color: #0A2463; margin: 0;">${amount} IC Credited!</h2>
               <p style="margin: 5px 0 0 0; color: #555;">Level 1 Commission</p>
             </div>
             <p>This amount has been added to your IGCIM Commission Wallet and is now available for withdrawal.</p>

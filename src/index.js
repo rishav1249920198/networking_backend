@@ -35,7 +35,7 @@ const referralRoutes = require('./routes/referrals');
 const dashboardRoutes = require('./routes/dashboard');
 const userRoutes = require('./routes/users');
 const notificationRoutes = require('./routes/notifications');
-
+const settingsRoutes = require('./routes/settings');
 const app = express();
 
 // Trust proxy for Render
@@ -127,6 +127,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/settings', settingsRoutes);
 
 // Root health check (Render sends HEAD / for health checks)
 app.get('/', (req, res) => {

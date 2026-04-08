@@ -23,7 +23,7 @@ const listCourses = async (req, res) => {
 
     const result = await pool.query(
       `SELECT c.id, c.name, c.category, c.description, c.duration_months,
-              c.fee, c.commission_percent, c.is_active, c.created_at,
+              c.fee, c.commission_percent, c.commission_ic, c.is_active, c.created_at,
               ce.name AS centre_name
        FROM courses c
        JOIN centres ce ON ce.id = c.centre_id
@@ -55,16 +55,16 @@ const listPublicCourses = async (req, res) => {
 
 // POST /api/courses  (Admin)
 const createCourse = async (req, res) => {
-  const { name, category, description, duration_months, fee, commission_percent } = req.body;
+  const { name, category, description, duration_months, fee, commission_percent, commission_ic } = req.body;
   const centre_id = req.body.centre_id || req.user.centre_id;
   if (!name || !fee) {
     return res.status(400).json({ success: false, message: 'Name and fee are required.' });
   }
   try {
     const result = await pool.query(
-      `INSERT INTO courses (centre_id, name, category, description, duration_months, fee, commission_percent, is_active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7, TRUE) RETURNING *`,
-      [centre_id, name, category || 'computer', description, duration_months || null, fee, commission_percent || 10]
+      `INSERT INTO courses (centre_id, name, category, description, duration_months, fee, commission_percent, commission_ic, is_active)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, TRUE) RETURNING *`,
+      [centre_id, name, category || 'computer', description, duration_months || null, fee, commission_percent || 10, commission_ic || null]
     );
     const course = result.rows[0];
     
@@ -86,12 +86,12 @@ const createCourse = async (req, res) => {
 // PUT /api/courses/:id  (Admin)
 const updateCourse = async (req, res) => {
   const { id } = req.params;
-  const { name, category, description, duration_months, fee, commission_percent, is_active } = req.body;
+  const { name, category, description, duration_months, fee, commission_percent, commission_ic, is_active } = req.body;
   const { role, centre_id } = req.user;
 
   try {
     // Security check: Only super_admin or centre's admin can update
-    const courseCheck = await pool.query('SELECT centre_id, fee, commission_percent FROM courses WHERE id = $1', [id]);
+    const courseCheck = await pool.query('SELECT centre_id, fee, commission_percent, commission_ic FROM courses WHERE id = $1', [id]);
     if (courseCheck.rows.length === 0) return res.status(404).json({ success: false, message: 'Course not found.' });
     
     if (role !== 'super_admin' && courseCheck.rows[0].centre_id !== centre_id) {
@@ -102,9 +102,9 @@ const updateCourse = async (req, res) => {
     const result = await pool.query(
       `UPDATE courses
        SET name=$1, category=$2, description=$3, duration_months=$4,
-           fee=$5, commission_percent=$6, is_active=$7, updated_at=NOW()
-       WHERE id=$8 RETURNING *`,
-      [name, category || 'computer', description, duration_months, fee, commission_percent, is_active !== undefined ? is_active : true, id]
+           fee=$5, commission_percent=$6, commission_ic=$7, is_active=$8, updated_at=NOW()
+       WHERE id=$9 RETURNING *`,
+      [name, category || 'computer', description, duration_months, fee, commission_percent, commission_ic, is_active !== undefined ? is_active : true, id]
     );
     const updatedCourse = result.rows[0];
 

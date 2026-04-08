@@ -16,7 +16,7 @@ class AdmissionService {
   }) {
     // 1. Get Course
     const courseResult = await dbClient.query(
-      `SELECT id, fee, commission_percent, is_active FROM courses WHERE id = $1 AND centre_id = $2`,
+      `SELECT id, fee, commission_percent, commission_ic, is_active FROM courses WHERE id = $1 AND centre_id = $2`,
       [course_id, centre_id]
     );
     if (courseResult.rows.length === 0 || !courseResult.rows[0].is_active) {
@@ -131,15 +131,15 @@ class AdmissionService {
     const insertSQL = `
       INSERT INTO admissions
         (centre_id, course_id, student_id, referred_by_user_id, admission_mode,
-         snapshot_fee, snapshot_commission_percent,
+         snapshot_fee, snapshot_commission_percent, snapshot_commission_ic,
          student_name, student_mobile, student_email,
          payment_proof_path, payment_mode, payment_reference, entered_by_staff_id, notes)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
       RETURNING id, status, created_at
     `;
     const insertParams = [
       centre_id, course_id, student_id, referredByUserId, admission_mode,
-      course.fee, course.commission_percent,
+      course.fee, course.commission_percent, course.commission_ic,
       student_name, student_mobile, student_email,
       payment_proof_path, payment_mode, payment_reference, staff_id, notes
     ];

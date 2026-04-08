@@ -116,7 +116,11 @@ const requestWithdrawal = async (req, res) => {
   const centre_id = req.user.centre_id;
 
   try {
-    // Check available (pending) balance via Ledger
+    // Fetch current conversion rate
+    const settingsRes = await pool.query("SELECT setting_value FROM system_settings WHERE setting_key = 'ic_conversion_rate'");
+    const conversionRate = parseFloat(settingsRes.rows[0]?.setting_value || '1.0');
+
+    // Check available (pending) balance via Ledger (treat amount as IC)
     const balance = await pool.query(
       `WITH comm_sums AS (
          SELECT COALESCE(SUM(amount), 0) AS total FROM commissions WHERE referrer_id = $1
@@ -142,10 +146,12 @@ const requestWithdrawal = async (req, res) => {
 
 
 
+    const inr_amount = (parseFloat(amount) * conversionRate).toFixed(2);
+
     const result = await pool.query(
-      `INSERT INTO withdrawal_requests (student_id, centre_id, amount, upi_id, bank_account, bank_ifsc, bank_name)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, status, created_at`,
-      [student_id, centre_id, amount, upi_id, bank_account, bank_ifsc, bank_name]
+      `INSERT INTO withdrawal_requests (student_id, centre_id, amount, inr_amount, upi_id, bank_account, bank_ifsc, bank_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, status, created_at`,
+      [student_id, centre_id, amount, inr_amount, upi_id, bank_account, bank_ifsc, bank_name]
     );
 
     // Send Withdrawal Request Email
@@ -156,13 +162,13 @@ const requestWithdrawal = async (req, res) => {
         const emailHtml = `
           <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
             <p>Dear ${student.full_name},</p>
-            <p>We have successfully received your withdrawal request.</p>
+            <p>We have successfully received your withdrawal request for <strong>${amount} IC</strong> (Converted Value: <strong>₹${inr_amount}</strong>).</p>
             <p>Our team will review your request shortly.</p>
             <p>You will receive another email once the withdrawal has been approved.</p>
             <p>Best regards<br>IGCIM Computer Centre</p>
           </div>
         `;
-        sendEmail(student.email, 'Withdrawal Request Received', emailHtml).catch(e => console.error("SMTP EMAIL ERROR:", e));
+        sendEmail(student.email, 'Withdrawal Request Received - IGCIM Credits', emailHtml).catch(e => console.error("SMTP EMAIL ERROR:", e));
 
         // Notify Admins
         const adminRes = await pool.query(
@@ -180,7 +186,8 @@ const requestWithdrawal = async (req, res) => {
               <p>A new withdrawal request has been submitted.</p>
               <ul>
                 <li><strong>Student Name:</strong> ${student.full_name}</li>
-                <li><strong>Amount:</strong> ₹${amount}</li>
+                <li><strong>Amount:</strong> ${amount} IC</li>
+                <li><strong>Converted Amount:</strong> ₹${inr_amount}</li>
                 <li><strong>Payment Method:</strong> ${upi_id ? 'UPI' : 'Bank Transfer'}</li>
               </ul>
               <p>Please log in to the admin dashboard to review and approve/reject this request.</p>
@@ -200,7 +207,7 @@ const requestWithdrawal = async (req, res) => {
     
     await notifyAdmins(
       'New Withdrawal Request 💰',
-      `${studentName} has requested a withdrawal of ₹${amount}.`,
+      `${studentName} has requested a withdrawal of ${amount} IC (₹${inr_amount}).`,
       'withdrawal_request',
       '/dashboard/admin/payouts',
       centre_id
@@ -315,7 +322,7 @@ const updateWithdrawalStatus = async (req, res) => {
               <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
                 <p>Dear ${student.full_name},</p>
                 <p>Your withdrawal request has been <strong>approved</strong> by IGCIM Computer Centre.</p>
-                <p>The withdrawal amount of ₹${parseFloat(amount).toLocaleString()} will be transferred to your registered payment method within 24 hours.</p>
+                <p>The withdrawal amount of <strong>${parseFloat(amount).toLocaleString()} IC</strong> (₹${parseFloat(wRes.rows[0].inr_amount).toLocaleString()}) will be transferred to your registered payment method within 24 hours.</p>
                 <p>If the amount is not received within this timeframe, please contact support.</p>
                 <p>Best regards<br>IGCIM Computer Centre</p>
               </div>
@@ -362,10 +369,10 @@ const updateWithdrawalStatus = async (req, res) => {
         
         if (status === 'approved' || status === 'paid') {
             title = 'Withdrawal Successful! ✅';
-            msg = `Your withdrawal of ₹${amount} has been processed and sent.`;
+            msg = `Your withdrawal of ${amount} IC (₹${wRes.rows[0].inr_amount}) has been processed and sent.`;
         } else if (status === 'rejected') {
             title = 'Withdrawal Rejected ❌';
-            msg = `Your withdrawal of ₹${amount} was not approved. ${admin_notes ? `Reason: ${admin_notes}` : ''}`;
+            msg = `Your withdrawal of ${amount} IC was not approved. ${admin_notes ? `Reason: ${admin_notes}` : ''}`;
         }
         
         await createNotification(student_id, title, msg, 'withdrawal_update', '/dashboard/student/earnings');
