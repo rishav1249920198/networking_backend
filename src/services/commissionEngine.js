@@ -63,8 +63,20 @@ const generateCommission = async (admissionId, client = pool) => {
   if (adm.snapshot_commission_ic !== null && adm.snapshot_commission_ic !== undefined) {
     amount = parseFloat(adm.snapshot_commission_ic);
   } else {
-    // scale IC based on conversion rate so that (IC * rate) = (Fee * Percent / 100)
-    const inrValue = (parseFloat(adm.snapshot_fee) * parseFloat(adm.snapshot_commission_percent)) / 100;
+    // NEW: Milestone Tier Scaling
+    const countRes = await client.query(
+      `SELECT COUNT(*) FROM admissions WHERE referred_by_user_id = $1 AND status = 'approved'`,
+      [adm.referred_by_user_id]
+    );
+    const approvedCount = parseInt(countRes.rows[0].count);
+    
+    let bonusPercent = 0;
+    if (approvedCount >= 15) bonusPercent = 0.35;
+    else if (approvedCount >= 10) bonusPercent = 0.20;
+    else if (approvedCount >= 5) bonusPercent = 0.10;
+
+    const finalPercent = parseFloat(adm.snapshot_commission_percent) + bonusPercent;
+    const inrValue = (parseFloat(adm.snapshot_fee) * finalPercent) / 100;
     amount = parseFloat(inrValue.toFixed(2));
   }
 

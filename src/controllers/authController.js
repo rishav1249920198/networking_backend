@@ -237,6 +237,22 @@ const verifyEmailOTP = async (req, res) => {
         pending.centre_id
       );
 
+      // NEW: Signup Bonus (50 IC = ₹0.50)
+      const signupBonusInr = 0.50;
+      await pool.query(
+        `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'signup_bonus', $2)`,
+        [newUser.id, signupBonusInr]
+      );
+
+      // NEW: Referral Reward for the new user (20 IC = ₹0.20)
+      if (referredByUserId) {
+        const referralBonusInr = 0.20;
+        await pool.query(
+          `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'referral_join_bonus', $2)`,
+          [newUser.id, referralBonusInr]
+        );
+      }
+
       // Delete from pending
       await pool.query(`DELETE FROM pending_registrations WHERE email = $1`, [email]);
 

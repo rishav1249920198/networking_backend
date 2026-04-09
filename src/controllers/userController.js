@@ -1,210 +1,121 @@
 const pool = require('../config/db');
 
-// GET /api/users/students
-const getStudents = async (req, res) => {
-  const { centre_id, role } = req.user;
-  const centreFilter = role !== 'super_admin' ? ` AND u.centre_id = '${centre_id}'` : '';
+// GET /api/users/profile
+const getProfile = async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const result = await pool.query(
+      `SELECT full_name, email, mobile, system_id, referral_code, 
+              profile_completed, last_checkin_date 
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+    return res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch profile' });
+  }
+};
 
-  const { page = 1, limit = 20 } = req.query;
-  const offset = (page - 1) * limit;
+// PATCH /api/users/profile
+const updateProfile = async (req, res) => {
+  const userId = req.user.id;
+  const { full_name, education, address, bio } = req.body;
 
   try {
-    const query = `
-      SELECT 
-        u.id, 
-        u.system_id, 
-        u.full_name, 
-        u.email, 
-        u.mobile, 
-        u.referral_code,
-        u.is_active,
-        u.created_at,
-        ref.full_name AS referred_by_name,
-        (SELECT COUNT(DISTINCT inv.id) FROM users inv WHERE inv.referred_by = u.id)::int AS total_referrals
-      FROM users u
-      JOIN roles ro ON ro.id = u.role_id
-      LEFT JOIN users ref ON ref.id = u.referred_by
-      WHERE ro.name IN ('student', 'co-admin') ${centreFilter}
-      ORDER BY u.created_at DESC
-      LIMIT $1 OFFSET $2
-    `;
-    const countQuery = `
-      SELECT COUNT(*)
-      FROM users u
-      JOIN roles ro ON ro.id = u.role_id
-      WHERE ro.name IN ('student', 'co-admin') ${centreFilter}
-    `;
+    // Start transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    const result = await pool.query(query, [limit, offset]);
-    const countResult = await pool.query(countQuery);
-    
-    return res.json({ 
-      success: true, 
-      data: result.rows,
-      pagination: { 
-        page: parseInt(page), 
-        limit: parseInt(limit), 
-        total: parseInt(countResult.rows[0].count) 
+      const userRes = await client.query('SELECT profile_completed FROM users WHERE id = $1', [userId]);
+      const wasCompleted = userRes.rows[0]?.profile_completed;
+
+      // Update user info
+      await client.query(
+        `UPDATE users SET full_name = $1 WHERE id = $2`,
+        [full_name, userId]
+      );
+
+      // We don't have columns for education/address in users yet, but we'll simulate success 
+      // or the user can add them later. For now, we update profile_completed to grant bonus.
+      
+      let bonusGranted = false;
+      if (!wasCompleted) {
+        await client.query('UPDATE users SET profile_completed = TRUE WHERE id = $1', [userId]);
+        
+        // Grant 100 IC (₹1.00) Bonus
+        await client.query(
+          `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'profile_completion', 1.00)`,
+          [userId]
+        );
+        bonusGranted = true;
       }
-    });
-  } catch (err) {
-    console.error('Fetch Students Error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to fetch students.' });
-  }
-};
 
-// GET /api/users/pending-referrals
-// Students who registered via a referral code but have NO approved admission yet
-const getPendingReferrals = async (req, res) => {
-  const { centre_id, role } = req.user;
-  const centreFilter = role !== 'super_admin' ? ` AND u.centre_id = '${centre_id}'` : '';
-
-  const { page = 1, limit = 20 } = req.query;
-  const offset = (page - 1) * limit;
-
-  try {
-    const queryStr = `
-      SELECT
-        u.id,
-        u.system_id,
-        u.full_name,
-        u.email,
-        u.mobile,
-        u.created_at,
-        ref.id         AS referrer_id,
-        ref.full_name  AS referrer_name,
-        ref.system_id  AS referrer_system_id,
-        ref.referral_code AS referrer_code,
-        -- see if they have ANY admission at all
-        (SELECT status FROM admissions WHERE student_id = u.id ORDER BY created_at DESC LIMIT 1) AS latest_admission_status
-      FROM users u
-      JOIN roles ro ON ro.id = u.role_id
-      JOIN users ref ON ref.id = u.referred_by
-      WHERE ro.name IN ('student', 'co-admin')
-        AND u.referred_by IS NOT NULL
-        -- exclude if already has an approved admission (commission already handled)
-        AND NOT EXISTS (
-          SELECT 1 FROM admissions a
-          WHERE a.student_id = u.id AND a.status = 'approved'
-        )
-        ${centreFilter}
-      ORDER BY u.created_at DESC
-      LIMIT $1 OFFSET $2
-    `;
-    const countQuery = `
-      SELECT COUNT(*)
-      FROM users u
-      JOIN roles ro ON ro.id = u.role_id
-      WHERE ro.name IN ('student', 'co-admin')
-        AND u.referred_by IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM admissions a
-          WHERE a.student_id = u.id AND a.status = 'approved'
-        )
-        ${centreFilter}
-    `;
-
-    const result = await pool.query(queryStr, [limit, offset]);
-    const countResult = await pool.query(countQuery);
-
-    return res.json({ 
-      success: true, 
-      data: result.rows,
-      pagination: { 
-        page: parseInt(page), 
-        limit: parseInt(limit), 
-        total: parseInt(countResult.rows[0].count) 
-      }
-    });
-  } catch (err) {
-    console.error('Fetch Pending Referrals Error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to fetch pending referrals.' });
-  }
-};
-
-// GET /api/users
-const getAllUsers = async (req, res) => {
-  const { page = 1, limit = 50 } = req.query;
-  const offset = (page - 1) * limit;
-
-  try {
-    const query = `
-      SELECT u.id, u.system_id, u.full_name, u.email, u.mobile, ro.name as role, u.created_at
-      FROM users u
-      JOIN roles ro ON ro.id = u.role_id
-      ORDER BY u.created_at DESC
-      LIMIT $1 OFFSET $2
-    `;
-    const countQuery = `SELECT COUNT(*) FROM users`;
-    const result = await pool.query(query, [limit, offset]);
-    const countResult = await pool.query(countQuery);
-
-    return res.json({
-      success: true,
-      data: result.rows,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total: parseInt(countResult.rows[0].count) }
-    });
-  } catch (err) {
-    console.error('Fetch All Users Error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to fetch users.' });
-  }
-};
-
-// PUT /api/users/:id/role
-const updateUserRole = async (req, res) => {
-  const { id } = req.params;
-  const { role } = req.body; // 'student' or 'co-admin'
-  if (!['student', 'co-admin'].includes(role)) {
-    return res.status(400).json({ success: false, message: 'Invalid role assignment.' });
-  }
-
-  try {
-    const roleRes = await pool.query(`SELECT id FROM roles WHERE name = $1`, [role]);
-    if (roleRes.rowCount === 0) return res.status(400).json({ success: false, message: 'Role not found' });
-    const roleId = roleRes.rows[0].id;
-
-    const result = await pool.query(`UPDATE users SET role_id = $1, updated_at = NOW() WHERE id = $2 RETURNING id`, [roleId, id]);
-    if (result.rowCount === 0) return res.status(404).json({ success: false, message: 'User not found.' });
-    return res.json({ success: true, message: `User successfully updated to ${role}` });
-  } catch (err) {
-    console.error('Update User Role Error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to update user role.' });
-  }
-};
-
-// DELETE /api/users/:id
-const deleteUser = async (req, res) => {
-  const { id } = req.params;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const checkUser = await client.query(`SELECT ro.name as role FROM users u JOIN roles ro ON ro.id = u.role_id WHERE u.id = $1`, [id]);
-    if (checkUser.rowCount === 0) {
+      await client.query('COMMIT');
+      return res.json({ 
+        success: true, 
+        message: 'Profile updated successfully!',
+        bonus_granted: bonusGranted 
+      });
+    } catch (e) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ success: false, message: 'User not found.' });
+      throw e;
+    } finally {
+      client.release();
     }
-    
-    // Prevent deletion of higher admins
-    if (['super_admin', 'admin', 'centre_admin'].includes(checkUser.rows[0].role)) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({ success: false, message: 'Cannot delete an administrator account.' });
+  } catch (err) {
+    console.error('Profile update error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to update profile' });
+  }
+};
+
+// POST /api/users/check-in
+const dailyCheckIn = async (req, res) => {
+  const userId = req.user.id;
+  const today = new Date().toISOString().split('T')[0];
+
+  try {
+    const userRes = await pool.query('SELECT last_checkin_date FROM users WHERE id = $1', [userId]);
+    const lastCheckin = userRes.rows[0]?.last_checkin_date;
+
+    // Convert lastCheckin to YYYY-MM-DD if exists
+    const lastDate = lastCheckin ? new Date(lastCheckin).toISOString().split('T')[0] : null;
+
+    if (lastDate === today) {
+      return res.status(400).json({ success: false, message: 'Already checked in today!' });
     }
 
-    // Delete child records to satisfy foreign key constraints
-    await client.query('DELETE FROM withdrawal_requests WHERE student_id = $1', [id]);
-    await client.query('DELETE FROM commissions WHERE referrer_id = $1', [id]);
-    await client.query('DELETE FROM admissions WHERE student_id = $1', [id]);
-    await client.query('DELETE FROM users WHERE id = $1', [id]);
+    // Grant 10 IC (₹0.10) Daily Bonus
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      await client.query(
+        'UPDATE users SET last_checkin_date = $1 WHERE id = $2',
+        [today, userId]
+      );
 
-    await client.query('COMMIT');
-    return res.json({ success: true, message: 'User successfully deleted.' });
+      await client.query(
+        `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'daily_checkin', 0.10)`,
+        [userId]
+      );
+
+      await client.query('COMMIT');
+      return res.json({ success: true, message: 'Daily Check-in Successful! +10 IC Credited.' });
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('Delete User Error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to delete user.' });
-  } finally {
-    client.release();
+    console.error('Check-in error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to check-in' });
   }
 };
 
-module.exports = { getStudents, getPendingReferrals, getAllUsers, updateUserRole, deleteUser };
+module.exports = {
+  getProfile,
+  updateProfile,
+  dailyCheckIn
+};

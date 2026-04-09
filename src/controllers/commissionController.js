@@ -69,8 +69,12 @@ const getEarningsSummary = async (req, res) => {
   try {
     const result = await pool.query(
       `WITH comm_sums AS (
-         SELECT COUNT(*) AS total_commissions, COALESCE(SUM(amount), 0) AS total_earnings
+         SELECT COUNT(*) AS total_commissions, COALESCE(SUM(amount), 0) AS total_comm_earnings
          FROM commissions WHERE referrer_id = $1
+       ),
+       bonus_sums AS (
+         SELECT COALESCE(SUM(amount), 0) AS total_bonus_earnings
+         FROM bonuses WHERE user_id = $1
        ),
        req_sums AS (
          SELECT 
@@ -80,11 +84,11 @@ const getEarningsSummary = async (req, res) => {
        )
        SELECT
          c.total_commissions,
-         c.total_earnings,
+         (c.total_comm_earnings + b.total_bonus_earnings) AS total_earnings,
          r.processing_earnings,
          r.paid_earnings,
-         (c.total_earnings - r.processing_earnings - r.paid_earnings) AS pending_earnings
-       FROM comm_sums c CROSS JOIN req_sums r`,
+         (c.total_comm_earnings + b.total_bonus_earnings - r.processing_earnings - r.paid_earnings) AS pending_earnings
+       FROM comm_sums c CROSS JOIN bonus_sums b CROSS JOIN req_sums r`,
       [userId]
     );
 

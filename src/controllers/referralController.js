@@ -105,15 +105,20 @@ const getLeaderboard = async (req, res) => {
       `SELECT 
          u.full_name, 
          u.system_id,
-         (SELECT COALESCE(SUM(amount), 0) FROM commissions WHERE referrer_id = u.id) AS total_earned,
+         (
+           (SELECT COALESCE(SUM(amount), 0) FROM commissions WHERE referrer_id = u.id) +
+           (SELECT COALESCE(SUM(amount), 0) FROM bonuses WHERE user_id = u.id)
+         ) AS total_earned,
          (SELECT COUNT(*) FROM users inv WHERE inv.referred_by = u.id) AS total_invited,
          (SELECT COUNT(DISTINCT admission_id) FROM commissions WHERE referrer_id = u.id) AS total_referrals
        FROM users u
        JOIN roles r ON r.id = u.role_id
        WHERE r.name IN ('student', 'co-admin') AND u.is_active = TRUE
-       -- Only include users who have at least invited 1 person OR earned commission
+       -- Only include users who have at least invited 1 person OR earned commission OR bonus
        AND (
          (SELECT COALESCE(SUM(amount), 0) FROM commissions WHERE referrer_id = u.id) > 0 
+         OR 
+         (SELECT COALESCE(SUM(amount), 0) FROM bonuses WHERE user_id = u.id) > 0
          OR 
          (SELECT COUNT(*) FROM users inv WHERE inv.referred_by = u.id) > 0
        )
