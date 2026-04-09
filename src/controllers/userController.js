@@ -27,28 +27,31 @@ const updateProfile = async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      const userRes = await client.query('SELECT profile_completed FROM users WHERE id = $1', [userId]);
+      const userRes = await client.query('SELECT profile_completed FROM public.users WHERE id = $1', [userId]);
       const wasCompleted = userRes.rows[0]?.profile_completed;
 
       // Update user info
       await client.query(
-        `UPDATE users SET full_name = $1, education = $2, address = $3, bio = $4 WHERE id = $5`,
-        [full_name, education, address, bio, userId]
+        `UPDATE public.users SET full_name = $1, education = $2, address = $3, bio = $4 WHERE id = $5`,
+        [full_name || '', education || '', address || '', bio || '', userId]
       );
 
-      // We don't have columns for education/address in users yet, but we'll simulate success 
-      // or the user can add them later. For now, we update profile_completed to grant bonus.
-      
       let bonusGranted = false;
-      if (!wasCompleted) {
-        await client.query('UPDATE users SET profile_completed = TRUE WHERE id = $1', [userId]);
+      if (wasCompleted === false || wasCompleted === null) {
+        await client.query('UPDATE public.users SET profile_completed = TRUE WHERE id = $1', [userId]);
         
-        // Grant 100 IC (₹1.00) Bonus
-        await client.query(
-          `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'profile_completion', 1.00)`,
-          [userId]
-        );
-        bonusGranted = true;
+        // Grant 100 IC (₹1.00) Bonus - Robust insert
+        try {
+          await client.query(
+            `INSERT INTO bonuses (user_id, bonus_type, amount) 
+             VALUES ($1, 'profile_completion', 1.00)
+             ON CONFLICT (user_id, bonus_type) DO NOTHING`,
+            [userId]
+          );
+          bonusGranted = true;
+        } catch (bonusErr) {
+          console.warn('[ProfileUpdate] Bonus grant failed or already exists:', bonusErr.message);
+        }
       }
 
       await client.query('COMMIT');
@@ -59,6 +62,7 @@ const updateProfile = async (req, res) => {
       });
     } catch (e) {
       await client.query('ROLLBACK');
+      console.error('[ProfileUpdate] Transaction Error:', e);
       throw e;
     } finally {
       client.release();
