@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getStudents, getPendingReferrals, getAllUsers, updateUserRole, deleteUser, getProfile, updateProfile, dailyCheckIn } = require('../controllers/userController');
+const { getStudents, getPendingReferrals, getAllUsers, updateUserRole, deleteUser, getProfile, updateProfile, dailyCheckIn, getBonuses } = require('../controllers/userController');
 const { authenticate, requireAdmin, requireCoAdminOrAdmin } = require('../middleware/auth');
 
 // Admin & Co-Admin
@@ -11,6 +11,7 @@ router.get('/pending-referrals', authenticate, requireCoAdminOrAdmin, getPending
 router.get('/profile', authenticate, getProfile);
 router.patch('/profile', authenticate, updateProfile);
 router.post('/check-in', authenticate, dailyCheckIn);
+router.get('/bonuses', authenticate, getBonuses);
 
 // Admin Only (Strict Management)
 router.get('/', authenticate, requireAdmin, getAllUsers);
