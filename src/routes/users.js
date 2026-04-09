@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getStudents, getPendingReferrals, getAllUsers, updateUserRole, deleteUser } = require('../controllers/userController');
+const { getStudents, getPendingReferrals, getAllUsers, updateUserRole, deleteUser, getProfile, updateProfile, dailyCheckIn } = require('../controllers/userController');
 const { authenticate, requireAdmin, requireCoAdminOrAdmin } = require('../middleware/auth');
 
 // Admin & Co-Admin
