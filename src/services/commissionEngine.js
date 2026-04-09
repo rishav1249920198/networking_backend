@@ -65,7 +65,7 @@ const generateCommission = async (admissionId, client = pool) => {
   } else {
     // scale IC based on conversion rate so that (IC * rate) = (Fee * Percent / 100)
     const inrValue = (parseFloat(adm.snapshot_fee) * parseFloat(adm.snapshot_commission_percent)) / 100;
-    amount = parseFloat((inrValue / conversionRate).toFixed(2));
+    amount = parseFloat(inrValue.toFixed(2));
   }
 
   // Insert Level 1 commission
@@ -92,7 +92,7 @@ const generateCommission = async (admissionId, client = pool) => {
 
     if (referrerResult.rows[0]?.referred_by && settings.level_2_percent > 0) {
       const l2InrValue = (parseFloat(adm.snapshot_fee) * parseFloat(settings.level_2_percent)) / 100;
-      const l2Amount = parseFloat((l2InrValue / conversionRate).toFixed(2));
+      const l2Amount = parseFloat(l2InrValue.toFixed(2));
       await client.query(
         `INSERT INTO commissions
           (admission_id, referrer_id, centre_id, snapshot_fee, snapshot_percent, amount, level, status)

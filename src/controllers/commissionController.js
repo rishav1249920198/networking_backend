@@ -120,7 +120,10 @@ const requestWithdrawal = async (req, res) => {
     const settingsRes = await pool.query("SELECT setting_value FROM system_settings WHERE setting_key = 'ic_conversion_rate'");
     const conversionRate = parseFloat(settingsRes.rows[0]?.setting_value || '1.0');
 
-    // Check available (pending) balance via Ledger (treat amount as IC)
+    const ic_amount = parseFloat(amount);
+    const inr_amount = parseFloat((ic_amount * conversionRate).toFixed(2));
+
+    // Check available (pending) balance via Ledger (ALL VALUES IN INR)
     const balance = await pool.query(
       `WITH comm_sums AS (
          SELECT COALESCE(SUM(amount), 0) AS total FROM commissions WHERE referrer_id = $1
@@ -135,23 +138,17 @@ const requestWithdrawal = async (req, res) => {
 
     const available = parseFloat(balance.rows[0].available);
     if (available <= 0) {
-      console.warn(`[Withdrawal] Attempt by ${student_id} with zero balance.`);
       return res.status(400).json({ success: false, message: 'No commission available' });
     }
 
-    if (available < parseFloat(amount)) {
-      console.warn(`[Withdrawal] Attempt by ${student_id} for ₹${amount} with insufficient balance ₹${available}.`);
+    if (available < inr_amount) {
       return res.status(400).json({ success: false, message: 'Insufficient available balance.' });
     }
 
-
-
-    const inr_amount = (parseFloat(amount) * conversionRate).toFixed(2);
-
     const result = await pool.query(
-      `INSERT INTO withdrawal_requests (student_id, centre_id, amount, inr_amount, upi_id, bank_account, bank_ifsc, bank_name)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, status, created_at`,
-      [student_id, centre_id, amount, inr_amount, upi_id, bank_account, bank_ifsc, bank_name]
+      `INSERT INTO withdrawal_requests (student_id, centre_id, amount, upi_id, bank_account, bank_ifsc, bank_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, status, created_at`,
+      [student_id, centre_id, inr_amount, upi_id, bank_account, bank_ifsc, bank_name]
     );
 
     // Send Withdrawal Request Email
