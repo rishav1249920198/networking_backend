@@ -7,6 +7,11 @@ const { authenticate, requireAdmin, requireCoAdminOrAdmin } = require('../middle
 router.get('/students', authenticate, requireCoAdminOrAdmin, getStudents);
 router.get('/pending-referrals', authenticate, requireCoAdminOrAdmin, getPendingReferrals);
 
+// Student Personal Features
+router.get('/profile', authenticate, getProfile);
+router.patch('/profile', authenticate, updateProfile);
+router.post('/check-in', authenticate, dailyCheckIn);
+
 // Admin Only (Strict Management)
 router.get('/', authenticate, requireAdmin, getAllUsers);
 router.put('/:id/role', authenticate, requireAdmin, updateUserRole);

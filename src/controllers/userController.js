@@ -114,8 +114,96 @@ const dailyCheckIn = async (req, res) => {
   }
 };
 
+// GET /api/users/students (Admin/Co-Admin)
+const getStudents = async (req, res) => {
+  try {
+    const { centre_id, role } = req.user;
+    const filter = role === 'super_admin' ? '' : `AND u.centre_id = '${centre_id}'`;
+    
+    const result = await pool.query(
+      `SELECT u.id, u.full_name, u.email, u.mobile, u.system_id, u.referral_code, 
+              u.created_at, r.name as role_name, c.name as centre_name
+       FROM users u
+       JOIN roles r ON r.id = u.role_id
+       LEFT JOIN centres c ON c.id = u.centre_id
+       WHERE r.name = 'student' ${filter}
+       ORDER BY u.created_at DESC`
+    );
+    return res.json({ success: true, data: result.rows });
+  } catch (err) {
+    console.error('getStudents error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch students' });
+  }
+};
+
+// GET /api/users/pending-referrals (Admin/Co-Admin)
+const getPendingReferrals = async (req, res) => {
+  try {
+    const { centre_id, role } = req.user;
+    const filter = role === 'super_admin' ? '' : `AND u.centre_id = '${centre_id}'`;
+
+    const result = await pool.query(
+      `SELECT u.id, u.full_name, u.email, u.mobile, u.system_id, u.referral_code, u.created_at
+       FROM users u
+       JOIN roles r ON r.id = u.role_id
+       LEFT JOIN admissions a ON a.student_id = u.id
+       WHERE r.name = 'student' AND a.id IS NULL ${filter}
+       ORDER BY u.created_at DESC`
+    );
+    return res.json({ success: true, data: result.rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch pending referrals' });
+  }
+};
+
+// GET /api/users (Admin Only)
+const getAllUsers = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.full_name, u.email, u.mobile, u.system_id, r.name as role, u.is_active, u.created_at
+       FROM users u
+       JOIN roles r ON r.id = u.role_id
+       ORDER BY u.created_at DESC`
+    );
+    return res.json({ success: true, data: result.rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch users' });
+  }
+};
+
+// PUT /api/users/:id/role (Admin Only)
+const updateUserRole = async (req, res) => {
+  const { id } = req.params;
+  const { role_name } = req.body;
+  try {
+    const roleRes = await pool.query('SELECT id FROM roles WHERE name = $1', [role_name]);
+    if (roleRes.rowCount === 0) return res.status(400).json({ success: false, message: 'Invalid role' });
+    
+    await pool.query('UPDATE users SET role_id = $1 WHERE id = $2', [roleRes.rows[0].id, id]);
+    return res.json({ success: true, message: 'User role updated' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to update role' });
+  }
+};
+
+// DELETE /api/users/:id (Admin Only)
+const deleteUser = async (req, res) => {
+  const { id } = req.params;
+  try {
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    return res.json({ success: true, message: 'User deleted' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to delete user' });
+  }
+};
+
 module.exports = {
   getProfile,
   updateProfile,
-  dailyCheckIn
+  dailyCheckIn,
+  getStudents,
+  getPendingReferrals,
+  getAllUsers,
+  updateUserRole,
+  deleteUser
 };
