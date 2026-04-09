@@ -17,26 +17,16 @@ const getStudentDashboard = async (req, res) => {
         [userId]
       ),
       pool.query(
-        `WITH comm_sums AS (
-           SELECT COALESCE(SUM(amount), 0) AS total_comm_earnings
-           FROM commissions WHERE referrer_id = $1
-         ),
-         bonus_sums AS (
-           SELECT COALESCE(SUM(amount), 0) AS total_bonus_earnings
-           FROM bonuses WHERE user_id = $1
-         ),
-         req_sums AS (
-           SELECT 
-             COALESCE(SUM(CASE WHEN status IN ('pending', 'approved') THEN amount END), 0) AS processing_earnings,
-             COALESCE(SUM(CASE WHEN status = 'paid' THEN amount END), 0) AS paid_earnings
-           FROM withdrawal_requests WHERE student_id = $1
-         )
-         SELECT
-           (c.total_comm_earnings + b.total_bonus_earnings) AS total_earnings,
-           r.processing_earnings,
-           r.paid_earnings,
-           (c.total_comm_earnings + b.total_bonus_earnings - r.processing_earnings - r.paid_earnings) AS pending_earnings
-         FROM comm_sums c CROSS JOIN bonus_sums b CROSS JOIN req_sums r`,
+        `SELECT
+           (SELECT COALESCE(SUM(amount), 0) FROM commissions WHERE referrer_id = $1) AS total_comm_earnings,
+           (SELECT COALESCE(SUM(amount), 0) FROM bonuses WHERE user_id = $1) AS total_bonus_earnings,
+           (SELECT COALESCE(SUM(CASE WHEN status IN ('pending', 'approved') THEN amount END), 0) FROM withdrawal_requests WHERE student_id = $1) AS processing_earnings,
+           (SELECT COALESCE(SUM(CASE WHEN status = 'paid' THEN amount END), 0) FROM withdrawal_requests WHERE student_id = $1) AS paid_earnings,
+           (
+             (SELECT COALESCE(SUM(amount), 0) FROM commissions WHERE referrer_id = $1) +
+             (SELECT COALESCE(SUM(amount), 0) FROM bonuses WHERE user_id = $1) -
+             (SELECT COALESCE(SUM(CASE WHEN status IN ('pending', 'approved', 'paid') THEN amount END), 0) FROM withdrawal_requests WHERE student_id = $1 AND status != 'rejected')
+           ) AS pending_earnings`,
         [userId]
       ),
       pool.query(

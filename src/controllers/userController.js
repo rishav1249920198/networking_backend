@@ -67,10 +67,35 @@ const updateProfile = async (req, res) => {
       }
 
       await client.query('COMMIT');
+
+      // Fetch the updated user to return as "Source of Truth"
+      const freshUserRes = await client.query(
+        `SELECT u.id, u.full_name, u.email, u.mobile, u.system_id, r.name as role, 
+                u.profile_completed, u.education, u.address, u.bio
+         FROM public.users u
+         JOIN roles r ON r.id = u.role_id
+         WHERE u.id = $1`, 
+        [userId]
+      );
+      
+      const freshUser = freshUserRes.rows[0];
+      
       return res.json({ 
         success: true, 
         message: 'Profile updated successfully!',
-        bonus_granted: bonusGranted 
+        bonus_granted: bonusGranted,
+        updatedUser: {
+          id: freshUser.id,
+          systemId: freshUser.system_id,
+          fullName: freshUser.full_name,
+          email: freshUser.email,
+          mobile: freshUser.mobile,
+          role: freshUser.role,
+          profileCompleted: freshUser.profile_completed,
+          education: freshUser.education,
+          address: freshUser.address,
+          bio: freshUser.bio
+        }
       });
     } catch (e) {
       if (client) await client.query('ROLLBACK');
