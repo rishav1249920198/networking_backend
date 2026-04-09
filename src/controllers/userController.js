@@ -26,21 +26,32 @@ const updateProfile = async (req, res) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      console.log(`[ProfileUpdate] Request for User ID: ${userId}`);
+      console.log('[ProfileUpdate] Body:', JSON.stringify(req.body));
 
       const userRes = await client.query('SELECT profile_completed FROM public.users WHERE id = $1', [userId]);
       const wasCompleted = userRes.rows[0]?.profile_completed;
 
-      // Update user info
-      await client.query(
-        `UPDATE public.users SET full_name = $1, education = $2, address = $3, bio = $4 WHERE id = $5`,
-        [full_name || '', education || '', address || '', bio || '', userId]
+      // Extract and sanitize inputs
+      const finalName = full_name || req.body.name || '';
+      const finalEd = education || '';
+      const finalAddr = address || '';
+      const finalBio = bio || '';
+
+      // Update user info with explicit public schema and quotes
+      const updateRes = await client.query(
+        `UPDATE "public"."users" 
+         SET "full_name" = $1, "education" = $2, "address" = $3, "bio" = $4 
+         WHERE "id" = $5`,
+        [finalName, finalEd, finalAddr, finalBio, userId]
       );
+      console.log(`[ProfileUpdate] Database Update successful. Rows affected: ${updateRes.rowCount}`);
 
       let bonusGranted = false;
       if (wasCompleted === false || wasCompleted === null) {
-        await client.query('UPDATE public.users SET profile_completed = TRUE WHERE id = $1', [userId]);
+        console.log('[ProfileUpdate] Granting profile completion bonus...');
+        await client.query('UPDATE "public"."users" SET "profile_completed" = TRUE WHERE "id" = $1', [userId]);
         
-        // Grant 100 IC (₹1.00) Bonus - Robust insert
         try {
           await client.query(
             `INSERT INTO bonuses (user_id, bonus_type, amount) 
@@ -49,8 +60,9 @@ const updateProfile = async (req, res) => {
             [userId]
           );
           bonusGranted = true;
+          console.log('[ProfileUpdate] Bonus granted successfully.');
         } catch (bonusErr) {
-          console.warn('[ProfileUpdate] Bonus grant failed or already exists:', bonusErr.message);
+          console.warn('[ProfileUpdate] Bonus grant skipped (already exists or constraint conflict):', bonusErr.message);
         }
       }
 
@@ -61,11 +73,16 @@ const updateProfile = async (req, res) => {
         bonus_granted: bonusGranted 
       });
     } catch (e) {
-      await client.query('ROLLBACK');
-      console.error('[ProfileUpdate] Transaction Error:', e);
-      throw e;
+      if (client) await client.query('ROLLBACK');
+      console.error('[ProfileUpdate] CRITICAL ERROR:', e.message);
+      console.error('[ProfileUpdate] Full Error Stack:', e.stack);
+      return res.status(500).json({ 
+        success: false, 
+        message: `Database error: ${e.message}`,
+        details: e.code 
+      });
     } finally {
-      client.release();
+      if (client) client.release();
     }
   } catch (err) {
     console.error('Profile update error:', err);
