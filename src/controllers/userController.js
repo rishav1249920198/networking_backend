@@ -6,7 +6,7 @@ const getProfile = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT full_name, email, mobile, system_id, referral_code, 
-              profile_completed, last_checkin_date 
+              profile_completed, last_checkin_date, education, address, bio
        FROM users WHERE id = $1`,
       [userId]
     );
@@ -32,8 +32,8 @@ const updateProfile = async (req, res) => {
 
       // Update user info
       await client.query(
-        `UPDATE users SET full_name = $1 WHERE id = $2`,
-        [full_name, userId]
+        `UPDATE users SET full_name = $1, education = $2, address = $3, bio = $4 WHERE id = $5`,
+        [full_name, education, address, bio, userId]
       );
 
       // We don't have columns for education/address in users yet, but we'll simulate success 
