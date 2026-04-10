@@ -53,11 +53,10 @@ const updateProfile = async (req, res) => {
       // 3. Grant bonus if this is the first completion
       let bonusGranted = false;
       if (wasCompleted === false || wasCompleted === null) {
-        // Insert bonus entry (ON CONFLICT prevents double-granting if already there)
+        // Insert bonus entry
         await client.query(
           `INSERT INTO bonuses (user_id, bonus_type, amount) 
-           VALUES ($1, 'profile_completion', 1.00)
-           ON CONFLICT (user_id, bonus_type) DO NOTHING`,
+           VALUES ($1, 'profile_completion', 1.00)`,
           [userId]
         );
         bonusGranted = true;
