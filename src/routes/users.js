@@ -11,6 +11,7 @@ router.get('/pending-referrals', authenticate, requireCoAdminOrAdmin, getPending
 router.get('/profile', authenticate, getProfile);
 router.patch('/profile', authenticate, updateProfile);
 router.post('/check-in', authenticate, dailyCheckIn);
+router.get('/check-in/history', authenticate, getCheckInHistory);
 router.get('/bonuses', authenticate, getBonuses);
 
 // Admin Only (Strict Management)

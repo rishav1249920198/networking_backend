@@ -239,20 +239,34 @@ const deleteUser = async (req, res) => {
   }
 };
 
-// GET /api/users/bonuses (Student)
-const getBonuses = async (req, res) => {
+// GET /api/users/check-in/history
+const getCheckInHistory = async (req, res) => {
   const userId = req.user.id;
+  const { month, year } = req.query; // Optional filters
+  
+  const now = new Date();
+  const filterMonth = month || (now.getMonth() + 1);
+  const filterYear = year || now.getFullYear();
+
   try {
     const result = await pool.query(
-      `SELECT id, bonus_type, amount, created_at 
-       FROM bonuses WHERE user_id = $1 
-       ORDER BY created_at DESC`,
-      [userId]
+      `SELECT DATE(created_at) as date
+       FROM bonuses 
+       WHERE user_id = $1 
+         AND bonus_type = 'daily_checkin'
+         AND EXTRACT(MONTH FROM created_at) = $2
+         AND EXTRACT(YEAR FROM created_at) = $3
+       ORDER BY created_at ASC`,
+      [userId, filterMonth, filterYear]
     );
-    return res.json({ success: true, data: result.rows });
+    
+    // Return unique dates only
+    const dates = [...new Set(result.rows.map(r => r.date.toISOString().split('T')[0]))];
+    
+    return res.json({ success: true, data: dates });
   } catch (err) {
-    console.error('getBonuses error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to fetch rewards history' });
+    console.error('getCheckInHistory error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch check-in history' });
   }
 };
 
@@ -260,6 +274,7 @@ module.exports = {
   getProfile,
   updateProfile,
   dailyCheckIn,
+  getCheckInHistory,
   getBonuses,
   getStudents,
   getPendingReferrals,
