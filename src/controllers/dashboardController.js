@@ -161,7 +161,13 @@ const getDashboardStats = async (req, res) => {
       pool.query(`SELECT COUNT(DISTINCT id) AS total_referrals FROM users WHERE referred_by = $1`, [userId]),
       pool.query(`SELECT COUNT(DISTINCT id) AS total_leads FROM admissions WHERE referred_by_user_id = $1 AND status = 'pending'`, [userId]),
       pool.query(`SELECT COUNT(DISTINCT id) AS total_admissions FROM admissions WHERE referred_by_user_id = $1 AND status = 'approved'`, [userId]),
-      pool.query(`SELECT COALESCE(SUM(amount), 0) AS total_commission FROM commissions WHERE referrer_id = $1`, [userId])
+      pool.query(
+        `SELECT (
+          (SELECT COALESCE(SUM(amount), 0) FROM commissions WHERE referrer_id = $1) +
+          (SELECT COALESCE(SUM(amount), 0) FROM bonuses WHERE user_id = $1)
+        ) AS total_commission`, 
+        [userId]
+      )
     ]);
 
     return res.json({

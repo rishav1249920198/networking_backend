@@ -43,58 +43,57 @@ const updateProfile = async (req, res) => {
         `UPDATE "public"."users" 
          SET "full_name" = $1, "education" = $2, "address" = $3, "bio" = $4 
          WHERE "id" = $5`,
+         SET "full_name" = $1, "education" = $2, "address" = $3, "bio" = $4, "profile_completed" = TRUE
+         WHERE "id" = $5`, 
         [finalName, finalEd, finalAddr, finalBio, userId]
       );
-      console.log(`[ProfileUpdate] Database Update successful. Rows affected: ${updateRes.rowCount}`);
 
+      if (updateRes.rowCount === 0) {
+        throw new Error("Failed to persist profile changes to the database.");
+      }
+
+      // 3. Grant bonus if this is the first completion
       let bonusGranted = false;
       if (wasCompleted === false || wasCompleted === null) {
-        console.log('[ProfileUpdate] Granting profile completion bonus...');
-        await client.query('UPDATE "public"."users" SET "profile_completed" = TRUE WHERE "id" = $1', [userId]);
-        
-        try {
-          await client.query(
-            `INSERT INTO bonuses (user_id, bonus_type, amount) 
-             VALUES ($1, 'profile_completion', 1.00)
-             ON CONFLICT (user_id, bonus_type) DO NOTHING`,
-            [userId]
-          );
-          bonusGranted = true;
-          console.log('[ProfileUpdate] Bonus granted successfully.');
-        } catch (bonusErr) {
-          console.warn('[ProfileUpdate] Bonus grant skipped (already exists or constraint conflict):', bonusErr.message);
-        }
+        // Insert bonus entry (ON CONFLICT prevents double-granting if already there)
+        await client.query(
+          `INSERT INTO bonuses (user_id, bonus_type, amount, description) 
+           VALUES ($1, 'profile_completion', 1.00, 'Profile Completion Reward')
+           ON CONFLICT (user_id, bonus_type) DO NOTHING`,
+          [userId]
+        );
+        bonusGranted = true;
       }
 
       await client.query('COMMIT');
 
-      // Fetch the updated user to return as "Source of Truth"
+      // 4. Fetch the absolute fresh user for frontend sync
       const freshUserRes = await client.query(
         `SELECT u.id, u.full_name, u.email, u.mobile, u.system_id, r.name as role, 
                 u.profile_completed, u.education, u.address, u.bio
-         FROM public.users u
+         FROM "public"."users" u
          JOIN roles r ON r.id = u.role_id
          WHERE u.id = $1`, 
         [userId]
       );
       
-      const freshUser = freshUserRes.rows[0];
+      const fresh = freshUserRes.rows[0];
       
       return res.json({ 
         success: true, 
         message: 'Profile updated successfully!',
         bonus_granted: bonusGranted,
         updatedUser: {
-          id: freshUser.id,
-          systemId: freshUser.system_id,
-          fullName: freshUser.full_name,
-          email: freshUser.email,
-          mobile: freshUser.mobile,
-          role: freshUser.role,
-          profileCompleted: freshUser.profile_completed,
-          education: freshUser.education,
-          address: freshUser.address,
-          bio: freshUser.bio
+          id: fresh.id,
+          systemId: fresh.system_id,
+          fullName: fresh.full_name,
+          email: fresh.email,
+          mobile: fresh.mobile,
+          role: fresh.role,
+          profileCompleted: fresh.profile_completed,
+          education: fresh.education,
+          address: fresh.address,
+          bio: fresh.bio
         }
       });
     } catch (e) {
