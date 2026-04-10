@@ -269,6 +269,22 @@ const getCheckInHistory = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to fetch check-in history' });
   }
 };
+// GET /api/users/bonuses (Student)
+const getBonuses = async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const result = await pool.query(
+      `SELECT id, bonus_type, amount, created_at 
+       FROM bonuses WHERE user_id = $1 
+       ORDER BY created_at DESC`,
+      [userId]
+    );
+    return res.json({ success: true, data: result.rows });
+  } catch (err) {
+    console.error('getBonuses error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch rewards history' });
+  }
+};
 
 module.exports = {
   getProfile,
