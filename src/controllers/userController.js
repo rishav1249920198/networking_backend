@@ -41,8 +41,6 @@ const updateProfile = async (req, res) => {
       // Update user info with explicit public schema and quotes
       const updateRes = await client.query(
         `UPDATE "public"."users" 
-         SET "full_name" = $1, "education" = $2, "address" = $3, "bio" = $4 
-         WHERE "id" = $5`,
          SET "full_name" = $1, "education" = $2, "address" = $3, "bio" = $4, "profile_completed" = TRUE
          WHERE "id" = $5`, 
         [finalName, finalEd, finalAddr, finalBio, userId]
