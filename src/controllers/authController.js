@@ -361,7 +361,7 @@ const login = async (req, res) => {
       `SELECT u.id, u.system_id, u.full_name, u.email, u.mobile, u.password_hash,
               u.centre_id, u.is_active, u.is_email_verified,
               u.failed_attempts, u.locked_until,
-              r.name AS role, u.referral_code
+              r.name AS role, u.referral_code, u.profile_completed
        FROM users u
        JOIN roles r ON r.id = u.role_id
        WHERE u.email = $1`,
@@ -643,7 +643,8 @@ const getMe = async (req, res) => {
     const result = await pool.query(
       `SELECT u.id, u.system_id, u.full_name, u.email, u.mobile,
               u.referral_code, u.centre_id, u.profile_photo,
-              r.name AS role, c.name AS centre_name, u.created_at
+              r.name AS role, c.name AS centre_name, u.created_at,
+              u.profile_completed
        FROM users u
        JOIN roles r ON r.id = u.role_id
        LEFT JOIN centres c ON c.id = u.centre_id
