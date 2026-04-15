@@ -242,23 +242,40 @@ const deleteUser = async (req, res) => {
 // GET /api/users/check-in/history
 const getCheckInHistory = async (req, res) => {
   const userId = req.user.id;
-  const { month, year } = req.query; // Optional filters
-  
-  const now = new Date();
-  const filterMonth = month || (now.getMonth() + 1);
-  const filterYear = year || now.getFullYear();
+  const { month, year, days } = req.query; // Optional filters
 
   try {
-    const result = await pool.query(
-      `SELECT DATE(created_at) as date
-       FROM bonuses 
-       WHERE user_id = $1 
-         AND bonus_type = 'daily_checkin'
-         AND EXTRACT(MONTH FROM created_at) = $2
-         AND EXTRACT(YEAR FROM created_at) = $3
-       ORDER BY created_at ASC`,
-      [userId, filterMonth, filterYear]
-    );
+    let result;
+
+    if (days) {
+      // Rolling window: return check-ins from the last N days
+      const daysInt = parseInt(days, 10) || 7;
+      result = await pool.query(
+        `SELECT DATE(created_at) as date
+         FROM bonuses 
+         WHERE user_id = $1 
+           AND bonus_type = 'daily_checkin'
+           AND created_at >= NOW() - INTERVAL '1 day' * $2
+         ORDER BY created_at ASC`,
+        [userId, daysInt]
+      );
+    } else {
+      // Legacy month/year filter
+      const now = new Date();
+      const filterMonth = month || (now.getMonth() + 1);
+      const filterYear = year || now.getFullYear();
+
+      result = await pool.query(
+        `SELECT DATE(created_at) as date
+         FROM bonuses 
+         WHERE user_id = $1 
+           AND bonus_type = 'daily_checkin'
+           AND EXTRACT(MONTH FROM created_at) = $2
+           AND EXTRACT(YEAR FROM created_at) = $3
+         ORDER BY created_at ASC`,
+        [userId, filterMonth, filterYear]
+      );
+    }
     
     // Return unique dates only
     const dates = [...new Set(result.rows.map(r => r.date.toISOString().split('T')[0]))];
