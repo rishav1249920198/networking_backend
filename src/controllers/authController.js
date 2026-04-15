@@ -237,19 +237,19 @@ const verifyEmailOTP = async (req, res) => {
         pending.centre_id
       );
 
-      // NEW: Signup Bonus (50 IC = ₹0.50)
-      const signupBonusInr = 0.50;
+      // Signup Bonus: 50 IC (₹50) — 1 IC = ₹1
+      const signupBonus = 50.00;
       await pool.query(
         `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'signup_bonus', $2)`,
-        [newUser.id, signupBonusInr]
+        [newUser.id, signupBonus]
       );
 
-      // NEW: Referral Reward for the new user (20 IC = ₹0.20)
+      // Referral Reward for the new user: 20 IC (₹20) — 1 IC = ₹1
       if (referredByUserId) {
-        const referralBonusInr = 0.20;
+        const referralBonus = 20.00;
         await pool.query(
           `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'referral_join_bonus', $2)`,
-          [newUser.id, referralBonusInr]
+          [newUser.id, referralBonus]
         );
       }
 

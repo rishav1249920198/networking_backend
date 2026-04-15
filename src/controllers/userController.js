@@ -54,11 +54,12 @@ const updateProfile = async (req, res) => {
       let bonusGranted = false;
       if (wasCompleted === false || wasCompleted === null) {
         // Insert bonus entry
-        await client.query(
-          `INSERT INTO bonuses (user_id, bonus_type, amount) 
-           VALUES ($1, 'profile_completion', 1.00)`,
-          [userId]
-        );
+         // Profile Completion: 100 IC (₹100) — 1 IC = ₹1
+         await client.query(
+           `INSERT INTO bonuses (user_id, bonus_type, amount) 
+            VALUES ($1, 'profile_completion', 100.00)`,
+           [userId]
+         );
         bonusGranted = true;
       }
 
@@ -127,7 +128,7 @@ const dailyCheckIn = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Already checked in today!' });
     }
 
-    // Grant 10 IC (₹0.10) Daily Bonus
+    // Grant 10 IC (₹10) Daily Bonus — 1 IC = ₹1
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -138,7 +139,7 @@ const dailyCheckIn = async (req, res) => {
       );
 
       await client.query(
-        `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'daily_checkin', 0.10)`,
+        `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'daily_checkin', 10.00)`,
         [userId]
       );
 
