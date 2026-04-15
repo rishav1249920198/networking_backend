@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const cache = require('../utils/cacheUtils');
 
 // GET /api/users/profile
 const getProfile = async (req, res) => {
@@ -144,6 +145,11 @@ const dailyCheckIn = async (req, res) => {
       );
 
       await client.query('COMMIT');
+
+      // Clear cache so UI reflects immediate changes
+      cache.delete(`earnings_${userId}`);
+      cache.delete(`stats_${userId}`);
+
       return res.json({ success: true, message: 'Daily Check-in Successful! +10 IC Credited.' });
     } catch (e) {
       await client.query('ROLLBACK');

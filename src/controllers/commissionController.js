@@ -3,6 +3,7 @@ const axios = require('axios');
 const { sendEmail } = require('../services/emailService');
 const { logAudit } = require('../services/auditService');
 const { createNotification, notifyAdmins } = require('../services/notificationService');
+const cache = require('../utils/cacheUtils');
 
 
 // GET /api/commissions  (Student sees own; Admin sees centre; SuperAdmin sees all)
@@ -67,6 +68,12 @@ const listCommissions = async (req, res) => {
 const getEarningsSummary = async (req, res) => {
   const userId = req.user.id;
   try {
+    const cacheKey = `earnings_${userId}`;
+    const cachedData = cache.get(cacheKey);
+    if (cachedData) {
+      return res.json({ success: true, data: cachedData, cached: true });
+    }
+
     const result = await pool.query(
       `WITH comm_sums AS (
          SELECT COUNT(*) AS total_commissions, COALESCE(SUM(amount), 0) AS total_comm_earnings
@@ -104,9 +111,12 @@ const getEarningsSummary = async (req, res) => {
       [userId]
     );
 
+    const responseData = { summary: result.rows[0], monthly: monthly.rows };
+    cache.set(cacheKey, responseData, 30); // Cache for 30 seconds
+
     return res.json({
       success: true,
-      data: { summary: result.rows[0], monthly: monthly.rows },
+      data: responseData,
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch earnings.' });
@@ -167,6 +177,10 @@ const requestWithdrawal = async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, status, created_at`,
       [student_id, centre_id, inr_amount, upi_id, bank_account, bank_ifsc, bank_name]
     );
+
+    // Clear caches so the dashboard stats update instantly
+    cache.delete(`earnings_${student_id}`);
+    cache.delete(`stats_${student_id}`);
 
     // Send Withdrawal Request Email
     try {

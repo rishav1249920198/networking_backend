@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const cache = require('../utils/cacheUtils');
 
 // GET /api/dashboard/student
 const getStudentDashboard = async (req, res) => {
@@ -157,6 +158,12 @@ const getDashboardStats = async (req, res) => {
   const userId = req.user.id;
 
   try {
+    const cacheKey = `stats_${userId}`;
+    const cachedData = cache.get(cacheKey);
+    if (cachedData) {
+      return res.json({ success: true, data: cachedData, cached: true });
+    }
+
     const [referrals, leads, admissions, commissions] = await Promise.all([
       pool.query(`SELECT COUNT(DISTINCT id) AS total_referrals FROM users WHERE referred_by = $1`, [userId]),
       pool.query(`SELECT COUNT(DISTINCT id) AS total_leads FROM admissions WHERE referred_by_user_id = $1 AND status = 'pending'`, [userId]),
@@ -170,14 +177,18 @@ const getDashboardStats = async (req, res) => {
       )
     ]);
 
+    const responseData = {
+      total_referrals: parseInt(referrals.rows[0].total_referrals) || 0,
+      total_leads: parseInt(leads.rows[0].total_leads) || 0,
+      total_admissions: parseInt(admissions.rows[0].total_admissions) || 0,
+      total_commission: parseFloat(commissions.rows[0].total_commission) || 0
+    };
+
+    cache.set(cacheKey, responseData, 30); // Cache for 30 seconds
+
     return res.json({
       success: true,
-      data: {
-        total_referrals: parseInt(referrals.rows[0].total_referrals) || 0,
-        total_leads: parseInt(leads.rows[0].total_leads) || 0,
-        total_admissions: parseInt(admissions.rows[0].total_admissions) || 0,
-        total_commission: parseFloat(commissions.rows[0].total_commission) || 0
-      }
+      data: responseData
     });
   } catch (err) {
     console.error('Dashboard Stats Error:', err);
