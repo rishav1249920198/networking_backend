@@ -125,7 +125,20 @@ const requestWithdrawal = async (req, res) => {
     const conversionRate = parseFloat(settingsRes.rows[0]?.setting_value || '1.0');
 
     const ic_amount = parseFloat(amount);
+    if (ic_amount < 100) {
+      return res.status(400).json({ success: false, message: 'Minimum withdrawal amount is 100 IC.' });
+    }
+    
     const inr_amount = parseFloat((ic_amount * conversionRate).toFixed(2));
+
+    // Check if the user has at least 1 approved admission
+    const admissionCheck = await pool.query(
+      `SELECT COUNT(*) FROM admissions WHERE referred_by_user_id = $1 AND status = 'approved'`,
+      [student_id]
+    );
+    if (parseInt(admissionCheck.rows[0].count) < 1) {
+      return res.status(400).json({ success: false, message: 'You must have at least 1 successful admission referral to request a withdrawal.' });
+    }
 
     // Check available (pending) balance via Ledger (ALL VALUES IN INR)
     const balance = await pool.query(
@@ -151,7 +164,7 @@ const requestWithdrawal = async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO withdrawal_requests (student_id, centre_id, amount, upi_id, bank_account, bank_ifsc, bank_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, status, created_at`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, status, created_at`,
       [student_id, centre_id, inr_amount, upi_id, bank_account, bank_ifsc, bank_name]
     );
 
