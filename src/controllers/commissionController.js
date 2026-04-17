@@ -297,6 +297,7 @@ const listWithdrawals = async (req, res) => {
         page: parseInt(page),
         limit: parseInt(limit),
         total: parseInt(countResult.rows[0].count),
+        totalPages: Math.ceil(parseInt(countResult.rows[0].count) / parseInt(limit))
       },
     });
   } catch (err) {

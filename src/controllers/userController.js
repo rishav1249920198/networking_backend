@@ -296,14 +296,30 @@ const getCheckInHistory = async (req, res) => {
 // GET /api/users/bonuses (Student)
 const getBonuses = async (req, res) => {
   const userId = req.user.id;
+  const { page = 1, limit = 5 } = req.query;
+  const offset = (page - 1) * limit;
+
   try {
     const result = await pool.query(
       `SELECT id, bonus_type, amount, created_at 
        FROM bonuses WHERE user_id = $1 
-       ORDER BY created_at DESC`,
-      [userId]
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, parseInt(limit), offset]
     );
-    return res.json({ success: true, data: result.rows });
+
+    const countResult = await pool.query(`SELECT COUNT(*) FROM bonuses WHERE user_id = $1`, [userId]);
+
+    return res.json({ 
+      success: true, 
+      data: result.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(countResult.rows[0].count),
+        totalPages: Math.ceil(parseInt(countResult.rows[0].count) / parseInt(limit))
+      }
+    });
   } catch (err) {
     console.error('getBonuses error:', err);
     return res.status(500).json({ success: false, message: 'Failed to fetch rewards history' });
