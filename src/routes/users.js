@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { getStudents, getPendingReferrals, getAllUsers, updateUserRole, deleteUser, getProfile, updateProfile, dailyCheckIn, getCheckInHistory, getBonuses } = require('../controllers/userController');
+const { 
+  getStudents, getPendingReferrals, getAllUsers, updateUserRole, deleteUser, 
+  getProfile, updateProfile, dailyCheckIn, getCheckInHistory, getBonuses,
+  changePassword, updateNotificationSettings, deleteAccount 
+} = require('../controllers/userController');
 const { authenticate, requireAdmin, requireCoAdminOrAdmin } = require('../middleware/auth');
 
 // Admin & Co-Admin
@@ -10,6 +14,10 @@ router.get('/pending-referrals', authenticate, requireCoAdminOrAdmin, getPending
 // Student Personal Features
 router.get('/profile', authenticate, getProfile);
 router.patch('/profile', authenticate, updateProfile);
+router.post('/change-password', authenticate, changePassword);
+router.patch('/notifications', authenticate, updateNotificationSettings);
+router.delete('/me', authenticate, deleteAccount);
+
 router.post('/check-in', authenticate, dailyCheckIn);
 router.get('/check-in/history', authenticate, getCheckInHistory);
 router.get('/bonuses', authenticate, getBonuses);

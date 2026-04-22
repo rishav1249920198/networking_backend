@@ -1,5 +1,7 @@
 const pool = require('../config/db');
 const cache = require('../utils/cacheUtils');
+const EngagementService = require('../services/engagementService');
+const bcrypt = require('bcryptjs');
 
 // GET /api/users/profile
 const getProfile = async (req, res) => {
@@ -7,12 +9,15 @@ const getProfile = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT full_name, email, mobile, system_id, referral_code, 
-              profile_completed, last_checkin_date, education, address, bio
+              profile_completed, profile_completeness, last_checkin_date, 
+              education, address, bio, dob, whatsapp_number, 
+              notification_settings, theme_preference
        FROM users WHERE id = $1`,
       [userId]
     );
     return res.json({ success: true, data: result.rows[0] });
   } catch (err) {
+    console.error('getProfile error:', err);
     return res.status(500).json({ success: false, message: 'Failed to fetch profile' });
   }
 };
@@ -20,96 +25,136 @@ const getProfile = async (req, res) => {
 // PATCH /api/users/profile
 const updateProfile = async (req, res) => {
   const userId = req.user.id;
-  const { full_name, education, address, bio } = req.body;
+  const { full_name, education, address, bio, dob, whatsapp_number } = req.body;
 
   try {
-    // Start transaction
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      console.log(`[ProfileUpdate] Request for User ID: ${userId}`);
-      console.log('[ProfileUpdate] Body:', JSON.stringify(req.body));
 
-      const userRes = await client.query('SELECT profile_completed FROM public.users WHERE id = $1', [userId]);
+      const userRes = await client.query('SELECT profile_completed FROM users WHERE id = $1', [userId]);
       const wasCompleted = userRes.rows[0]?.profile_completed;
 
-      // Extract and sanitize inputs
-      const finalName = full_name || req.body.name || '';
-      const finalEd = education || '';
-      const finalAddr = address || '';
-      const finalBio = bio || '';
+      // Calculate completeness
+      const fields = { full_name, education, address, bio, dob, whatsapp_number };
+      const filledCount = Object.values(fields).filter(v => v && v.toString().trim() !== '').length;
+      const totalFields = Object.keys(fields).length;
+      const completeness = Math.round((filledCount / totalFields) * 100);
 
-      // Update user info with explicit public schema and quotes
       const updateRes = await client.query(
-        `UPDATE "public"."users" 
-         SET "full_name" = $1, "education" = $2, "address" = $3, "bio" = $4, "profile_completed" = TRUE
-         WHERE "id" = $5`, 
-        [finalName, finalEd, finalAddr, finalBio, userId]
+        `UPDATE users 
+         SET full_name = $1, education = $2, address = $3, bio = $4, 
+             dob = $5, whatsapp_number = $6, profile_completeness = $7,
+             profile_completed = CASE WHEN $7 >= 100 THEN TRUE ELSE profile_completed END
+         WHERE id = $8`, 
+        [full_name, education, address, bio, dob, whatsapp_number, completeness, userId]
       );
 
-      if (updateRes.rowCount === 0) {
-        throw new Error("Failed to persist profile changes to the database.");
-      }
+      if (updateRes.rowCount === 0) throw new Error("User not found");
 
-      // 3. Grant bonus if this is the first completion
       let bonusGranted = false;
-      if (wasCompleted === false || wasCompleted === null) {
-        // Insert bonus entry
-         // Profile Completion: 1.5 IC (₹1.50) — 1 IC = ₹1
-         await client.query(
-           `INSERT INTO bonuses (user_id, bonus_type, amount) 
-            VALUES ($1, 'profile_completion', 1.50)`,
-           [userId]
-         );
+      if (!wasCompleted && completeness >= 100) {
+        await EngagementService.grantProfileCompletionBonus(userId, client);
         bonusGranted = true;
       }
 
       await client.query('COMMIT');
 
-      // 4. Fetch the absolute fresh user for frontend sync
       const freshUserRes = await client.query(
         `SELECT u.id, u.full_name, u.email, u.mobile, u.system_id, r.name as role, 
-                u.profile_completed, u.education, u.address, u.bio
-         FROM "public"."users" u
+                u.profile_completed, u.profile_completeness, u.education, u.address, 
+                u.bio, u.dob, u.whatsapp_number
+         FROM users u
          JOIN roles r ON r.id = u.role_id
          WHERE u.id = $1`, 
         [userId]
       );
       
-      const fresh = freshUserRes.rows[0];
-      
       return res.json({ 
         success: true, 
         message: 'Profile updated successfully!',
         bonus_granted: bonusGranted,
-        updatedUser: {
-          id: fresh.id,
-          systemId: fresh.system_id,
-          fullName: fresh.full_name,
-          email: fresh.email,
-          mobile: fresh.mobile,
-          role: fresh.role,
-          profileCompleted: fresh.profile_completed,
-          education: fresh.education,
-          address: fresh.address,
-          bio: fresh.bio
-        }
+        data: freshUserRes.rows[0]
       });
     } catch (e) {
-      if (client) await client.query('ROLLBACK');
-      console.error('[ProfileUpdate] CRITICAL ERROR:', e.message);
-      console.error('[ProfileUpdate] Full Error Stack:', e.stack);
-      return res.status(500).json({ 
-        success: false, 
-        message: `Database error: ${e.message}`,
-        details: e.code 
-      });
+      await client.query('ROLLBACK');
+      throw e;
     } finally {
-      if (client) client.release();
+      client.release();
     }
   } catch (err) {
     console.error('Profile update error:', err);
     return res.status(500).json({ success: false, message: 'Failed to update profile' });
+  }
+};
+
+// POST /api/users/change-password
+const changePassword = async (req, res) => {
+  const userId = req.user.id;
+  const { currentPassword, newPassword } = req.body;
+
+  try {
+    const userRes = await pool.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+    const user = userRes.rows[0];
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isMatch) return res.status(401).json({ success: false, message: 'Current password incorrect' });
+
+    const newHash = await bcrypt.hash(newPassword, 12);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, userId]);
+
+    return res.json({ success: true, message: 'Password changed successfully' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to change password' });
+  }
+};
+
+// PATCH /api/users/notifications
+const updateNotificationSettings = async (req, res) => {
+  const userId = req.user.id;
+  const { settings } = req.body; // Expecting { financial, system, marketing }
+
+  try {
+    await pool.query('UPDATE users SET notification_settings = notification_settings || $1 WHERE id = $2', [JSON.stringify(settings), userId]);
+    return res.json({ success: true, message: 'Notification settings updated' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to update settings' });
+  }
+};
+
+// DELETE /api/users/me (Soft Delete)
+const deleteAccount = async (req, res) => {
+  const userId = req.user.id;
+  const { password } = req.body;
+
+  try {
+    const userRes = await pool.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+    const user = userRes.rows[0];
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) return res.status(401).json({ success: false, message: 'Password incorrect' });
+
+    // Check balance
+    const walletRes = await pool.query('SELECT total_rupees FROM points_wallet WHERE user_id = $1', [userId]);
+    // Check balance
+    const walletRes = await pool.query('SELECT total_rupees FROM points_wallet WHERE user_id = $1', [userId]);
+    if (walletRes.rows[0]?.total_rupees > 0) {
+      return res.status(400).json({ success: false, message: 'Cannot deactivate account with remaining balance. Please withdraw first.' });
+    }
+
+    // NEW: Check for pending or approved withdrawals
+    const activeWithdrawals = await pool.query(
+        "SELECT id FROM withdrawal_requests WHERE student_id = $1 AND status IN ('pending', 'approved')",
+        [userId]
+    );
+    if (activeWithdrawals.rowCount > 0) {
+        return res.status(400).json({ success: false, message: 'Cannot deactivate account with active withdrawal requests. Please wait for completion or contact support.' });
+    }
+
+    await pool.query("UPDATE users SET deleted_at = NOW(), is_active = FALSE WHERE id = $1", [userId]);
+    return res.json({ success: true, message: 'Account deactivated successfully. You have been logged out.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to deactivate account' });
   }
 };
 
@@ -122,35 +167,30 @@ const dailyCheckIn = async (req, res) => {
     const userRes = await pool.query('SELECT last_checkin_date FROM users WHERE id = $1', [userId]);
     const lastCheckin = userRes.rows[0]?.last_checkin_date;
 
-    // Convert lastCheckin to YYYY-MM-DD if exists
-    const lastDate = lastCheckin ? new Date(lastCheckin).toISOString().split('T')[0] : null;
+    // Convert lastCheckin to YYYY-MM-DD for same-day check
+    const lastDateStr = lastCheckin ? new Date(lastCheckin).toISOString().split('T')[0] : null;
 
-    if (lastDate === today) {
+    if (lastDateStr === today) {
       return res.status(400).json({ success: false, message: 'Already checked in today!' });
     }
 
-    // Grant 0.1 IC (₹0.10) Daily Bonus — 1 IC = ₹1
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const { icAmount, cycleDay, reset } = await EngagementService.processDailyCheckIn(userId, lastCheckin, client);
       
-      await client.query(
-        'UPDATE users SET last_checkin_date = $1 WHERE id = $2',
-        [today, userId]
-      );
-
-      await client.query(
-        `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'daily_checkin', 0.10)`,
-        [userId]
-      );
+      await client.query('UPDATE users SET last_checkin_date = NOW() WHERE id = $1', [userId]);
 
       await client.query('COMMIT');
-
-      // Clear cache so UI reflects immediate changes
-      cache.delete(`earnings_${userId}`);
-      cache.delete(`stats_${userId}`);
-
-      return res.json({ success: true, message: 'Daily Check-in Successful! +10 IC Credited.' });
+      return res.json({ 
+        success: true, 
+        message: reset 
+            ? `Streak Reset! Day 1 Check-in Successful. Received ${icAmount} IC.`
+            : `Day ${cycleDay} Check-in Successful! Received ${icAmount} IC.`,
+        reward: icAmount,
+        cycleDay,
+        reset
+      });
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -255,28 +295,28 @@ const getCheckInHistory = async (req, res) => {
     let result;
 
     if (days) {
-      // Rolling window: return check-ins from the last N days
+      // Rolling window: return check-ins from points_transactions
       const daysInt = parseInt(days, 10) || 7;
       result = await pool.query(
         `SELECT DATE(created_at) as date
-         FROM bonuses 
+         FROM points_transactions 
          WHERE user_id = $1 
-           AND bonus_type = 'daily_checkin'
+           AND type = 'daily_checkin'
            AND created_at >= NOW() - INTERVAL '1 day' * $2
          ORDER BY created_at ASC`,
         [userId, daysInt]
       );
     } else {
-      // Legacy month/year filter
+      // Month/year filter from points_transactions
       const now = new Date();
       const filterMonth = month || (now.getMonth() + 1);
       const filterYear = year || now.getFullYear();
 
       result = await pool.query(
         `SELECT DATE(created_at) as date
-         FROM bonuses 
+         FROM points_transactions 
          WHERE user_id = $1 
-           AND bonus_type = 'daily_checkin'
+           AND type = 'daily_checkin'
            AND EXTRACT(MONTH FROM created_at) = $2
            AND EXTRACT(YEAR FROM created_at) = $3
          ORDER BY created_at ASC`,
@@ -301,14 +341,18 @@ const getBonuses = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT id, bonus_type, amount, created_at 
-       FROM bonuses WHERE user_id = $1 
+      `SELECT id, type as bonus_type, rupees as amount, created_at 
+       FROM points_transactions WHERE user_id = $1 AND (type LIKE '%bonus%' OR type IN ('daily_checkin', 'profile_completion'))
        ORDER BY created_at DESC
        LIMIT $2 OFFSET $3`,
       [userId, parseInt(limit), offset]
     );
 
-    const countResult = await pool.query(`SELECT COUNT(*) FROM bonuses WHERE user_id = $1`, [userId]);
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM points_transactions WHERE user_id = $1 AND (type LIKE '%bonus%' OR type IN ('daily_checkin', 'profile_completion'))`,
+      [userId]
+    );
+
 
     return res.json({ 
       success: true, 
@@ -336,5 +380,8 @@ module.exports = {
   getPendingReferrals,
   getAllUsers,
   updateUserRole,
-  deleteUser
+  deleteUser,
+  changePassword,
+  updateNotificationSettings,
+  deleteAccount
 };

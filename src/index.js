@@ -23,6 +23,9 @@ require('dotenv').config();
 const { verifyEmailService } = require('./services/emailService');
 
 const xssClean = require('./middleware/xssClean');
+const TreeEngine = require('./services/treeEngine');
+const TreeHealthCheck = require('./services/treeHealthCheck');
+const { startMonitoringBot } = require('../bot');
 
 const { generalLimiter } = require('./middleware/rateLimiter');
 
@@ -124,6 +127,7 @@ app.use('/api/courses', courseRoutes);
 app.use('/api/commissions', commissionRoutes);
 app.use('/api/referrals', referralRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/earnings', require('./routes/points'));
 app.use('/api/users', userRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', require('./routes/admin'));
@@ -172,8 +176,30 @@ app.listen(PORT, async () => {
   // Verify services on startup
   await verifyEmailService();
   
+  // NEW: Background Placement Automation (Fix #1, #7)
+  // Retries users stuck in 'pending' status every 5 minutes
+  setInterval(async () => {
+    try {
+      await TreeEngine.processPendingPlacements();
+    } catch (err) {
+      console.error('🔴 Placement Automation Error:', err);
+    }
+  }, 1000 * 60 * 5); // 5 minutes
+
+  // NEW: Daily Tree Health Monitor (Fix #6)
+  setInterval(async () => {
+    try {
+      await TreeHealthCheck.run();
+    } catch (err) {
+      console.error('🔴 Tree Health Monitor Error:', err);
+    }
+  }, 1000 * 60 * 60 * 24); // 24 hours
+
   // Keep event loop alive
   setInterval(() => {}, 1000 * 60 * 60);
+
+  // START MONITORING BOT
+  startMonitoringBot();
 });
 
 module.exports = app;

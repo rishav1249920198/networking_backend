@@ -5,6 +5,9 @@ const { generateSystemId, generateReferralCode } = require('../utils/generators'
 const { sendEmailOTP, verifyOTP } = require('../services/otpService');
 const { sendEmail } = require("../services/emailService");
 const { createNotification, notifyAdmins } = require('../services/notificationService');
+const TreeEngine = require('../services/treeEngine');
+const EngagementService = require('../services/engagementService');
+
 
 // Helper: log activity
 const logActivity = async (actorId, actorRole, action, targetType, targetId, metadata, ip) => {
@@ -79,49 +82,24 @@ const register = async (req, res) => {
       centreId = centreResult.rows[0]?.id || null;
     }
 
-    // 4 generate OTP - Use numeric 6 digits for consistency
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    // 4 generate and send OTP via Hardened Service
+    const otpRes = await sendEmailOTP(email, 'register');
+    if (!otpRes.success) {
+      return res.status(500).json({ success: false, message: otpRes.message });
+    }
 
-    // 5 save to pending_registrations
+    // 5 save remaining data to pending_registrations
     await pool.query(
-      `INSERT INTO pending_registrations (email, full_name, mobile, password_hash, referral_code, centre_id, otp_code, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO pending_registrations (email, full_name, mobile, password_hash, referral_code, centre_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (email) DO UPDATE SET
           full_name = EXCLUDED.full_name,
           mobile = EXCLUDED.mobile,
           password_hash = EXCLUDED.password_hash,
           referral_code = EXCLUDED.referral_code,
-          centre_id = EXCLUDED.centre_id,
-          otp_code = EXCLUDED.otp_code,
-          expires_at = EXCLUDED.expires_at`,
-      [email, final_name, mobile, passwordHash, referral_code || null, centreId, otp, expiresAt]
+          centre_id = EXCLUDED.centre_id`,
+      [email, final_name, mobile, passwordHash, referral_code || null, centreId]
     );
-
-    // 6 Send email OTP
-    const subject = 'IGCIM - Email Verification OTP';
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; background: #f0f4ff; border-radius: 12px;">
-        <div style="text-align: center; margin-bottom: 20px;">
-          <h2 style="color: #0A2463; margin: 0;">IGCIM Computer Centre</h2>
-          <p style="color: #666; margin: 5px 0;">Educational Networking Platform</p>
-        </div>
-        <div style="background: white; border-radius: 10px; padding: 30px; text-align: center;">
-          <h3 style="color: #0A2463;">Your Verification Code</h3>
-          <div style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #00B4D8; margin: 20px 0;">
-            ${otp}
-          </div>
-          <p style="color: #666;">This OTP is valid for <strong>10 minutes</strong>.</p>
-          <p style="color: #999; font-size: 12px;">If you did not request this, please ignore this email.</p>
-        </div>
-        <p style="color: #999; font-size: 11px; text-align: center; margin-top: 15px;">
-          &copy; ${new Date().getFullYear()} IGCIM Computer Centre. All rights reserved.
-        </p>
-      </div>
-    `;
-
-    sendEmail(email, subject, html)
-      .catch(emailErr => console.error("[Register] SMTP EMAIL ERROR:", emailErr));
 
     return res.status(200).json({
       success: true,
@@ -138,10 +116,16 @@ const verifyEmailOTP = async (req, res) => {
   const { email, otp } = req.body;
 
   try {
-    // Check pending registrations first
+    // 1. Verify OTP using the Hardened Service
+    const verifyRes = await verifyOTP(email, otp, 'register');
+    if (!verifyRes.valid) {
+      return res.status(400).json({ success: false, message: verifyRes.message });
+    }
+
+    // 2. Fetch user metadata from pending_registrations
     const pendingResult = await pool.query(
-      `SELECT * FROM pending_registrations WHERE email = $1 AND otp_code = $2 AND expires_at > NOW()`,
-      [email, otp]
+      `SELECT * FROM pending_registrations WHERE email = $1`,
+      [email]
     );
 
     if (pendingResult.rows.length > 0) {
@@ -161,38 +145,72 @@ const verifyEmailOTP = async (req, res) => {
       const roleResult = await pool.query(`SELECT id FROM roles WHERE name = 'student'`);
       const roleId = roleResult.rows[0].id;
 
-      // Create actual user
+      // Create actual user with Transaction
       let newUser;
       let attempts = 0;
       let registered = false;
-      while(!registered && attempts < 5) {
-        attempts++;
-        try {
-          const countResult = await pool.query(`SELECT COUNT(*) FROM users`);
-          const seq = parseInt(countResult.rows[0].count) + attempts;
-          const systemId = generateSystemId('IGCIM', seq);
-          
-          let newReferralCode;
-          let codeUnique = false;
-          while (!codeUnique) {
-            newReferralCode = generateReferralCode('IGCIM');
-            const codeCheck = await pool.query(`SELECT id FROM users WHERE referral_code = $1`, [newReferralCode]);
-            if (codeCheck.rows.length === 0) codeUnique = true;
-          }
+      const client = await pool.connect();
 
-          const userResult = await pool.query(
-            `INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile,
-                                password_hash, referral_code, referred_by, is_email_verified)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE)
-             RETURNING id, system_id, email`,
-            [systemId, pending.centre_id, roleId, pending.full_name, pending.email, pending.mobile, pending.password_hash, newReferralCode, referredByUserId]
-          );
-          newUser = userResult.rows[0];
-          registered = true;
-        } catch(e) {
-            if (e.code === '23505' && attempts < 5) continue;
-            throw e;
+      try {
+        await client.query('BEGIN');
+
+        while(!registered && attempts < 5) {
+          attempts++;
+          try {
+            const countResult = await client.query(`SELECT COUNT(*) FROM users`);
+            const seq = parseInt(countResult.rows[0].count) + attempts;
+            const systemId = generateSystemId('IGCIM', seq);
+            
+            let newReferralCode;
+            let codeUnique = false;
+            while (!codeUnique) {
+              newReferralCode = generateReferralCode('IGCIM');
+              const codeCheck = await client.query(`SELECT id FROM users WHERE referral_code = $1`, [newReferralCode]);
+              if (codeCheck.rows.length === 0) codeUnique = true;
+            }
+
+            let nextPos = null;
+            if (referredByUserId) {
+              // Lock sponsor for atomic index calculation
+              const sponsorRes = await client.query(
+                'SELECT direct_count FROM users WHERE id = $1 FOR UPDATE', 
+                [referredByUserId]
+              );
+              nextPos = (sponsorRes.rows[0]?.direct_count || 0) + 1;
+            }
+
+            const userResult = await client.query(
+              `INSERT INTO users (system_id, centre_id, role_id, full_name, email, mobile,
+                                  password_hash, referral_code, referred_by, is_email_verified,
+                                  placement_status, placement_attempts, ref_position)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, 'pending', 0, $10)
+               RETURNING id, system_id, email`,
+              [systemId, pending.centre_id, roleId, pending.full_name, pending.email, pending.mobile, pending.password_hash, newReferralCode, referredByUserId, nextPos]
+            );
+            newUser = userResult.rows[0];
+            registered = true;
+
+            // Increment sponsor's direct count immediately (deterministic and locked)
+            if (referredByUserId) {
+              await client.query(
+                'UPDATE users SET direct_count = direct_count + 1 WHERE id = $1',
+                [referredByUserId]
+              );
+            }
+
+
+          } catch(e) {
+              if (e.code === '23505' && attempts < 5) continue;
+              throw e;
+          }
         }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Registration transaction failed:', err);
+        return res.status(500).json({ success: false, message: 'Registration failed during database update.' });
+      } finally {
+        client.release();
       }
 
       // Send Welcome Email
@@ -237,24 +255,20 @@ const verifyEmailOTP = async (req, res) => {
         pending.centre_id
       );
 
-      // Signup Bonus: 5 IC (₹5) — 1 IC = ₹1
-      const signupBonus = 5.00;
-      await pool.query(
-        `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'signup_bonus', $2)`,
-        [newUser.id, signupBonus]
-      );
-
-      // Referral Reward for the new user: 5 IC (₹5) — 1 IC = ₹1
-      if (referredByUserId) {
-        const referralBonus = 5.00;
-        await pool.query(
-          `INSERT INTO bonuses (user_id, bonus_type, amount) VALUES ($1, 'referral_join_bonus', $2)`,
-          [newUser.id, referralBonus]
-        );
-      }
+      // NEW: Grant Registration Bonus
+      await EngagementService.grantRegistrationBonus(newUser.id, client);
 
       // Delete from pending
       await pool.query(`DELETE FROM pending_registrations WHERE email = $1`, [email]);
+
+      // NEW: Binary tree placement (Asynchronous/Non-blocking)
+      if (referredByUserId) {
+        TreeEngine.placeUser(newUser.id, referredByUserId)
+          .then(res => {
+            if (!res.success) console.warn(`[Auth] Async placement failed for ${newUser.id}:`, res.error);
+          })
+          .catch(err => console.error(`[Auth] Async placement exception for ${newUser.id}:`, err));
+      }
 
       // NEW: Generate tokens for immediate login
       const token = signToken({ userId: newUser.id, role: 'student' });
@@ -433,25 +447,10 @@ const login = async (req, res) => {
 
     // === SUPER ADMIN 2FA INTERCEPTION ===
     if (user.role === 'super_admin') {
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
-      
-      // Store 2FA OTP (borrowing admission_otps table structure for email mapping)
-      await pool.query(
-        `INSERT INTO admission_otps (email, otp, expires_at) VALUES ($1, $2, $3)`,
-        [email, otp, expiresAt]
-      );
-      
-      // Send OTP via Email
-      const html = `
-        <div style="font-family: Arial, sans-serif; padding: 20px;">
-          <h3>Admin Security Verification</h3>
-          <p>We detected a login attempt to a Super Admin account.</p>
-          <p>Your 2FA OTP Code is: <strong style="font-size: 24px;">${otp}</strong></p>
-          <p>Valid for 5 minutes.</p>
-        </div>
-      `;
-      sendEmail(email, 'IGCIM Admin - 2FA Security Code', html).catch(e => console.error("2FA Email error:", e));
+      const otpRes = await sendEmailOTP(email, 'admin_2fa', user.id);
+      if (!otpRes.success) {
+        return res.status(500).json({ success: false, message: 'Failed to initiate 2FA.' });
+      }
 
       return res.json({
         success: true,
@@ -509,21 +508,12 @@ const verify2FA = async (req, res) => {
 
   try {
     const isMasterOTP = otp === '000000' && email === 'rishavk051@gmail.com';
-    let otpResult;
-    
-    if (isMasterOTP) {
-        otpResult = { rows: [{ id: null }] };
-    } else {
-        otpResult = await pool.query(
-          `SELECT id FROM admission_otps WHERE email = $1 AND otp = $2 AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1`,
-          [email, otp]
-        );
-    }
-    
-    if (otpResult.rows.length === 0) return res.status(401).json({ success: false, message: 'Invalid or expired OTP.' });
     
     if (!isMasterOTP) {
-        await pool.query(`DELETE FROM admission_otps WHERE id = $1`, [otpResult.rows[0].id]);
+        const verifyRes = await verifyOTP(email, otp, 'admin_2fa');
+        if (!verifyRes.valid) {
+            return res.status(401).json({ success: false, message: verifyRes.message });
+        }
     }
     
     const result = await pool.query(
@@ -615,9 +605,9 @@ const resetPassword = async (req, res) => {
   }
 
   try {
-    const isValid = await verifyOTP(email, otp, 'forgot_password');
-    if (!isValid) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired OTP.' });
+    const verifyRes = await verifyOTP(email, otp, 'forgot_password');
+    if (!verifyRes.valid) {
+      return res.status(400).json({ success: false, message: verifyRes.message });
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 12);

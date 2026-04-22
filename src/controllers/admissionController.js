@@ -1,7 +1,9 @@
 const pool = require('../config/db');
 const { validateReferral } = require('../services/referralValidator');
-const { generateCommission } = require('../services/commissionEngine');
+
+const EarningEngine = require('../services/earningEngine');
 const AdmissionService = require('../services/AdmissionService');
+
 const { sendEmail } = require("../services/emailService");
 const { generateOTP, generateSystemId, generateReferralCode } = require('../utils/generators');
 const bcrypt = require('bcryptjs');
@@ -16,7 +18,8 @@ const createOnlineAdmission = async (req, res) => {
       student_id: req.user.id,
       centre_id: req.user.centre_id,
       payment_proof_path: req.file ? req.file.path : null,
-      admission_mode: 'online'
+      admission_mode: 'online',
+      client_ip: req.ip
     });
  
     // NEW: Notify Admins
@@ -54,7 +57,8 @@ const createPublicAdmission = async (req, res) => {
       student_id: null, // No auth context implies pending account status vs physical student binding
       centre_id: centreRes.rows[0].id,
       payment_proof_path: req.file ? req.file.path : null,
-      admission_mode: 'online'
+      admission_mode: 'online',
+      client_ip: req.ip
     });
     
     return res.status(201).json({
@@ -365,8 +369,9 @@ const approveAdmission = async (req, res) => {
       [adminId, id]
     );
 
-    // Generate commission
-    const commResult = await generateCommission(id, client);
+    // NEW: Distribute points via Production Lock Earning Engine (Hardened)
+    await EarningEngine.processAdmissionEarning(id);
+
 
     await client.query(
       `INSERT INTO activity_logs (actor_id, actor_role, action, target_type, target_id, metadata)
@@ -381,7 +386,7 @@ const approveAdmission = async (req, res) => {
       adminId,
       id,
       'admission_approved',
-      `Admin approved admission. Commission Result: ${commResult.message}`,
+      `Admin approved admission. Status: approved. New Points system triggered.`,
       req.ip
     );
 
@@ -524,11 +529,14 @@ const listAdmissions = async (req, res) => {
     params.push(offset);
 
     const result = await pool.query(
-      `SELECT a.id, a.student_name, a.student_mobile, a.status, a.admission_mode,
+      `SELECT a.id, a.student_name, a.student_mobile, a.student_email, a.status, a.admission_mode,
               a.snapshot_fee, a.snapshot_commission_percent, a.created_at,
-              a.payment_proof_path, a.rejection_reason,
+              a.payment_proof_path, a.payment_reference, a.rejection_reason,
               co.name AS course_name, c.name AS centre_name,
-              u.full_name AS referrer_name
+              u.full_name AS referrer_name,
+              (SELECT COUNT(*) > 1 FROM admissions a2 WHERE a2.student_email = a.student_email) as is_duplicate_email,
+              (SELECT COUNT(*) > 1 FROM admissions a2 WHERE a2.student_mobile = a.student_mobile) as is_duplicate_mobile,
+              (SELECT COUNT(*) > 1 FROM admissions a2 WHERE a2.payment_reference = a.payment_reference AND a.payment_reference IS NOT NULL) as is_duplicate_payment
        FROM admissions a
        JOIN courses co ON co.id = a.course_id
        JOIN centres c ON c.id = a.centre_id
@@ -624,8 +632,9 @@ const adminEnrollAndApprove = async (req, res) => {
     );
     const admissionId = admResult.rows[0].id;
 
-    // Generate commission immediately
-    const commResult = await generateCommission(admissionId, client);
+    // NEW: Distribute points via Production Lock Earning Engine (Hardened)
+    await EarningEngine.processAdmissionEarning(admissionId);
+
 
     await client.query('COMMIT');
 

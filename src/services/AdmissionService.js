@@ -66,28 +66,21 @@ class AdmissionService {
       }
     }
 
-    // 3. Validate Duplicate Admission
-    let dupQuery = '';
-    let dupParams = [];
-    if (student_id) {
-      if (admission_mode === 'online') {
-        dupQuery = `SELECT id FROM admissions WHERE student_id = $1 AND course_id = $2 AND status IN ('pending', 'approved')`;
-        dupParams = [student_id, course_id];
-      } else {
-        dupQuery = `SELECT id FROM admissions WHERE student_email = $1 AND course_id = $2 AND status IN ('pending', 'approved')`;
-        dupParams = [student_email, course_id];
-      }
-    } else {
-      // Public admission (no student_id yet)
-      dupQuery = `SELECT id FROM admissions WHERE student_email = $1 AND course_id = $2 AND status IN ('pending', 'approved')`;
-      dupParams = [student_email, course_id];
-    }
+    // 3. Global Fraud Protection: Validate Duplicate Admission
+    // Check if email, mobile, or payment reference already exists in any PENDING or APPROVED admission
+    const fraudCheck = await dbClient.query(`
+      SELECT 'email' as type FROM admissions WHERE student_email = $1 AND status IN ('pending', 'approved')
+      UNION ALL
+      SELECT 'mobile' as type FROM admissions WHERE student_mobile = $2 AND status IN ('pending', 'approved')
+      UNION ALL
+      SELECT 'payment' as type FROM admissions WHERE payment_reference = $3 AND status IN ('pending', 'approved') AND $3 IS NOT NULL
+    `, [student_email, student_mobile, payment_reference]);
 
-    if (dupParams[0]) {
-      const dupCheck = await dbClient.query(dupQuery, dupParams);
-      if (dupCheck.rows.length > 0) {
-        throw new Error('An active or pending admission for this course already exists.');
-      }
+    if (fraudCheck.rows.length > 0) {
+      const type = fraudCheck.rows[0].type;
+      if (type === 'email') throw new Error('An admission with this email already exists.');
+      if (type === 'mobile') throw new Error('An admission with this mobile number already exists.');
+      if (type === 'payment') throw new Error('This payment reference has already been used.');
     }
 
     // 3. Process Referral Code (NON-BLOCKING)
@@ -133,18 +126,34 @@ class AdmissionService {
         (centre_id, course_id, student_id, referred_by_user_id, admission_mode,
          snapshot_fee, snapshot_commission_percent, snapshot_commission_ic,
          student_name, student_mobile, student_email,
-         payment_proof_path, payment_mode, payment_reference, entered_by_staff_id, notes)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         payment_proof_path, payment_mode, payment_reference, entered_by_staff_id, notes,
+         client_ip)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
       RETURNING id, status, created_at
     `;
     const insertParams = [
       centre_id, course_id, student_id, referredByUserId, admission_mode,
       course.fee, course.commission_percent, course.commission_ic,
       student_name, student_mobile, student_email,
-      payment_proof_path, payment_mode, payment_reference, staff_id, notes
+      payment_proof_path, payment_mode, payment_reference, staff_id, notes,
+      arguments[0].client_ip || null
     ];
 
     const admResult = await dbClient.query(insertSQL, insertParams);
+    const admissionId = admResult.rows[0].id;
+
+    // 5. Post-Insertion Fraud Scan
+    (async () => {
+      try {
+        const FraudService = require('./fraudService');
+        const flags = await FraudService.getFraudFlags(admissionId);
+        if (flags.length > 0) {
+          await pool.query('UPDATE admissions SET fraud_flags = $1 WHERE id = $2', [JSON.stringify(flags), admissionId]);
+        }
+      } catch (err) {
+        console.error('[AdmissionService] Post-insertion fraud scan failed:', err);
+      }
+    })();
 
     // Send Background Notification Emails
     (async () => {

@@ -11,10 +11,10 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
-  max: 10,
+  max: 20,
   idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 5000,
-  statement_timeout: 10000, // 10s timeout for any single query
+  connectionTimeoutMillis: 30000,
+  statement_timeout: 30000, // 30s timeout for any single query
 });
 
 pool.on('error', (err) => {

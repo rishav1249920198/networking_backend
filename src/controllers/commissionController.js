@@ -4,6 +4,8 @@ const { sendEmail } = require('../services/emailService');
 const { logAudit } = require('../services/auditService');
 const { createNotification, notifyAdmins } = require('../services/notificationService');
 const cache = require('../utils/cacheUtils');
+const TreeEngine = require('../services/treeEngine');
+
 
 
 // GET /api/commissions  (Student sees own; Admin sees centre; SuperAdmin sees all)
@@ -130,46 +132,69 @@ const requestWithdrawal = async (req, res) => {
   const centre_id = req.user.centre_id;
 
   try {
-    // Fetch current conversion rate
-    const settingsRes = await pool.query("SELECT setting_value FROM system_settings WHERE setting_key = 'ic_conversion_rate'");
-    const conversionRate = parseFloat(settingsRes.rows[0]?.setting_value || '1.0');
+    // Fetch current conversion rate and minimum threshold
+    const settingsRes = await pool.query(
+      "SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ('ic_conversion_rate', 'min_withdrawal_amount', 'max_withdrawal_per_day')"
+    );
+    
+    let conversionRate = 50.0;
+    const maxPerDay = 1;
 
+    // ANTI-SPAM: Check for pending requests OR daily limit
+    const activeReqs = await pool.query(
+      `SELECT status, created_at FROM withdrawal_requests 
+       WHERE student_id = $1 AND (status = 'pending' OR created_at >= NOW() - INTERVAL '1 day')
+       ORDER BY created_at DESC`,
+      [student_id]
+    );
+
+    if (activeReqs.rows.length > 0) {
+      const hasPending = activeReqs.rows.some(r => r.status === 'pending');
+      if (hasPending) {
+        return res.status(400).json({ success: false, message: 'You already have a pending withdrawal request. Please wait for it to be processed.' });
+      }
+      if (activeReqs.rows.length >= maxPerDay) {
+        return res.status(400).json({ success: false, message: `Withdrawal limit reached. You can only request ${maxPerDay} withdrawal(s) per 24 hours.` });
+      }
+    }
+
+    const { toIC, toRupees } = require('../utils/conversionUtils');
     const ic_amount = parseFloat(amount);
-    if (ic_amount < 100) {
-      return res.status(400).json({ success: false, message: 'Minimum withdrawal amount is 100 IC.' });
+    const minWithdrawalIC = 6.0;
+
+    if (ic_amount < minWithdrawalIC) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Minimum withdrawal amount is ${minWithdrawalIC} IC.` 
+      });
     }
     
-    const inr_amount = parseFloat((ic_amount * conversionRate).toFixed(2));
+    const inr_amount = toRupees(ic_amount);
 
-    // Check if the user has at least 1 approved admission
-    const admissionCheck = await pool.query(
-      `SELECT COUNT(*) FROM admissions WHERE referred_by_user_id = $1 AND status = 'approved'`,
-      [student_id]
-    );
-    if (parseInt(admissionCheck.rows[0].count) < 1) {
-      return res.status(400).json({ success: false, message: 'You must have at least 1 successful admission referral to request a withdrawal.' });
+    // NEW: Withdrawal Unlock Rule (Binary Pair)
+    const userStatusRes = await pool.query('SELECT withdrawal_unlocked, left_count, right_count FROM users WHERE id = $1', [student_id]);
+    const userStatus = userStatusRes.rows[0];
+
+    if (!userStatus.withdrawal_unlocked) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Withdrawal locked. You need at least 1 Paid Left and 1 Paid Right referral. Current: Left(${userStatus.left_count}), Right(${userStatus.right_count})`
+      });
     }
 
-    // Check available (pending) balance via Ledger (ALL VALUES IN INR)
-    const balance = await pool.query(
-      `WITH comm_sums AS (
-         SELECT COALESCE(SUM(amount), 0) AS total FROM commissions WHERE referrer_id = $1
-       ),
-       req_sums AS (
-         SELECT COALESCE(SUM(amount), 0) AS requested FROM withdrawal_requests WHERE student_id = $1 AND status != 'rejected'
-       )
-       SELECT (c.total - r.requested) AS available
-       FROM comm_sums c CROSS JOIN req_sums r`,
+    // Check available balance via NEW Points Wallet
+    const walletRes = await pool.query('SELECT total_rupees FROM points_wallet WHERE user_id = $1', [student_id]);
+    const totalRupees = parseFloat(walletRes.rows[0]?.total_rupees || 0);
+
+    const pendingRes = await pool.query(
+      "SELECT COALESCE(SUM(amount), 0) as requested FROM withdrawal_requests WHERE student_id = $1 AND status != 'rejected'",
       [student_id]
     );
+    const requested = parseFloat(pendingRes.rows[0].requested);
+    const availableRupees = totalRupees - requested;
 
-    const available = parseFloat(balance.rows[0].available);
-    if (available <= 0) {
-      return res.status(400).json({ success: false, message: 'No commission available' });
-    }
-
-    if (available < inr_amount) {
-      return res.status(400).json({ success: false, message: 'Insufficient available balance.' });
+    if (availableRupees < inr_amount) {
+      return res.status(400).json({ success: false, message: `Insufficient balance. Available: ${toIC(availableRupees).toFixed(2)} IC` });
     }
 
     const result = await pool.query(
@@ -177,6 +202,8 @@ const requestWithdrawal = async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, status, created_at`,
       [student_id, centre_id, inr_amount, upi_id, bank_account, bank_ifsc, bank_name]
     );
+
+
 
     // Clear caches so the dashboard stats update instantly
     cache.delete(`earnings_${student_id}`);
@@ -190,7 +217,7 @@ const requestWithdrawal = async (req, res) => {
         const emailHtml = `
           <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
             <p>Dear ${student.full_name},</p>
-            <p>We have successfully received your withdrawal request for <strong>${amount} IC</strong> (Converted Value: <strong>₹${inr_amount}</strong>).</p>
+            <p>We have successfully received your withdrawal request for <strong>${amount} IC</strong>.</p>
             <p>Our team will review your request shortly.</p>
             <p>You will receive another email once the withdrawal has been approved.</p>
             <p>Best regards<br>IGCIM Computer Centre</p>
@@ -317,16 +344,59 @@ const updateWithdrawalStatus = async (req, res) => {
   }
 
   try {
-    const wRes = await pool.query(
-      `UPDATE withdrawal_requests 
-       SET status = $1, admin_notes = $2, reviewed_by = $3, reviewed_at = NOW()
-       WHERE id = $4 RETURNING *`,
-      [status, admin_notes, adminId, id]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    if (wRes.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Withdrawal request not found.' });
-    }
+      if (status === 'paid') {
+        const { payout_reference_id } = req.body;
+        if (!payout_reference_id) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ success: false, message: 'Payout Reference ID is mandatory for marking as Paid.' });
+        }
+
+        const wRes = await client.query(
+          `UPDATE withdrawal_requests 
+           SET status = $1, admin_notes = $2, paid_by = $3, paid_at = NOW(), payout_reference_id = $4
+           WHERE id = $5 AND status != 'paid' RETURNING *`,
+          [status, admin_notes, adminId, payout_reference_id, id]
+        );
+
+        if (wRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ success: false, message: 'Withdrawal already paid or not found.' });
+        }
+        request = wRes.rows[0];
+      } else {
+        const wRes = await client.query(
+          `UPDATE withdrawal_requests 
+           SET status = $1, admin_notes = $2, reviewed_by = $3, reviewed_at = NOW()
+           WHERE id = $4 RETURNING *`,
+          [status, admin_notes, adminId, id]
+        );
+
+        if (wRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ success: false, message: 'Withdrawal request not found.' });
+        }
+        request = wRes.rows[0];
+      }
+
+      // If marked as 'paid', deduct from Points Wallet
+      if (status === 'paid') {
+        const EarningEngine = require('../services/earningEngine'); 
+        await EarningEngine.addTransaction(
+          request.student_id,
+          0,
+          -parseFloat(request.amount),
+          'withdrawal',
+          null, // No admission associated
+          `Withdrawal payout processed (ID: ${id})`,
+          client
+        );
+      }
+
+      await client.query('COMMIT');
 
     // Secure Audit Log
     await logAudit(
@@ -351,7 +421,7 @@ const updateWithdrawalStatus = async (req, res) => {
               <div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
                 <p>Dear ${student.full_name},</p>
                 <p>Your withdrawal request has been <strong>approved</strong> by IGCIM Computer Centre.</p>
-                <p>The withdrawal amount of <strong>${parseFloat(amount).toLocaleString()} IC</strong> (₹${parseFloat(wRes.rows[0].inr_amount).toLocaleString()}) will be transferred to your registered payment method within 24 hours.</p>
+                <p>The withdrawal amount of <strong>${parseFloat(amount).toLocaleString()} IC</strong> will be transferred to your registered payment method within 24 hours.</p>
                 <p>If the amount is not received within this timeframe, please contact support.</p>
                 <p>Best regards<br>IGCIM Computer Centre</p>
               </div>
@@ -398,7 +468,7 @@ const updateWithdrawalStatus = async (req, res) => {
         
         if (status === 'approved' || status === 'paid') {
             title = 'Withdrawal Successful! ✅';
-            msg = `Your withdrawal of ${amount} IC (₹${wRes.rows[0].inr_amount}) has been processed and sent.`;
+            msg = `Your withdrawal of ${amount} IC has been processed and sent.`;
         } else if (status === 'rejected') {
             title = 'Withdrawal Rejected ❌';
             msg = `Your withdrawal of ${amount} IC was not approved. ${admin_notes ? `Reason: ${admin_notes}` : ''}`;
@@ -407,11 +477,19 @@ const updateWithdrawalStatus = async (req, res) => {
         await createNotification(student_id, title, msg, 'withdrawal_update', '/dashboard/student/earnings');
     }
 
+    } catch (e) {
+      if (client) await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      if (client) client.release();
+    }
+
     return res.json({ success: true, message: `Withdrawal request marked as ${status}.` });
   } catch (err) {
     console.error('Update withdrawal error:', err);
     return res.status(500).json({ success: false, message: 'Failed to update withdrawal status.' });
   }
+
 };
 
 

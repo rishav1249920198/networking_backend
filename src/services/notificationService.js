@@ -8,17 +8,20 @@ const pool = require('../config/db');
  * @param {string} type - 'referral', 'admission', 'commission', 'withdrawal'
  * @param {string} link - Optional frontend link
  */
-const createNotification = async (userId, title, message, type = 'general', link = null) => {
+const createNotification = async (userId, title, message, type = 'general', link = null, client = pool) => {
   try {
     if (!userId) return; // Prevent errors if user ID is missing
     
-    await pool.query(
+    await client.query(
       `INSERT INTO notifications (user_id, title, message, type, link)
        VALUES ($1, $2, $3, $4, $5)`,
       [userId, title, message, type, link]
     );
   } catch (err) {
-    console.error('Failed to create notification:', err);
+    // During stress tests/simulations, notification failures are non-critical
+    if (process.env.NODE_ENV !== 'test') {
+       console.error('Failed to create notification:', err.message);
+    }
   }
 };
 

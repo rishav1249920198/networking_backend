@@ -7,7 +7,6 @@ const listCourses = async (req, res) => {
   const user = req.user;
   const isAdmin = ['super_admin', 'centre_admin', 'admin', 'co-admin'].includes(user?.role);
   try {
-    // Admins see ALL courses (active + inactive). Students/staff see only active.
     let where = isAdmin ? 'WHERE 1=1' : 'WHERE c.is_active = TRUE';
     const params = [];
 
@@ -23,8 +22,8 @@ const listCourses = async (req, res) => {
 
     const result = await pool.query(
       `SELECT c.id, c.name, c.category, c.description, c.duration_months,
-              c.fee, c.commission_percent, c.commission_ic, c.is_active, c.created_at,
-              ce.name AS centre_name
+              c.fee, c.points, c.cap_percent, c.level_distribution, c.boost_enabled,
+              c.is_active, c.created_at, ce.name AS centre_name
        FROM courses c
        JOIN centres ce ON ce.id = c.centre_id
        ${where}
@@ -53,25 +52,57 @@ const listPublicCourses = async (req, res) => {
   }
 };
 
+const validateCourseData = (data) => {
+  const { cap_percent, level_distribution } = data;
+  
+  if (cap_percent !== undefined) {
+    const cp = parseFloat(cap_percent);
+    if (cp < 3 || cp > 6) return 'Cap percentage must be between 3% and 6%.';
+  }
+
+  if (level_distribution !== undefined) {
+    const dist = typeof level_distribution === 'string' ? JSON.parse(level_distribution) : level_distribution;
+    const sum = Object.values(dist).reduce((acc, val) => acc + parseFloat(val || 0), 0);
+    if (Math.round(sum) !== 100) return 'Level distribution percentages must sum to 100%.';
+  }
+
+  return null;
+};
+
 // POST /api/courses  (Admin)
 const createCourse = async (req, res) => {
-  const { name, category, description, duration_months, fee, commission_percent, commission_ic } = req.body;
+  const { 
+    name, category, description, duration_months, fee, points, 
+    cap_percent, level_distribution, boost_enabled 
+  } = req.body;
   const centre_id = req.body.centre_id || req.user.centre_id;
+
   if (!name || !fee) {
     return res.status(400).json({ success: false, message: 'Name and fee are required.' });
   }
+
+  const error = validateCourseData(req.body);
+  if (error) return res.status(400).json({ success: false, message: error });
+
   try {
     const result = await pool.query(
-      `INSERT INTO courses (centre_id, name, category, description, duration_months, fee, commission_percent, commission_ic, is_active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, TRUE) RETURNING *`,
-      [centre_id, name, category || 'computer', description, duration_months || null, fee, commission_percent || 10, commission_ic || null]
+      `INSERT INTO courses (
+        centre_id, name, category, description, duration_months, fee, points, 
+        cap_percent, level_distribution, boost_enabled, is_active
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, TRUE) RETURNING *`,
+      [
+        centre_id, name, category || 'computer', description, duration_months || null, 
+        fee, points || 0, cap_percent || 5, 
+        level_distribution || '{"L1": 50, "L2": 20, "L3": 10, "L4": 10, "L5": 5, "L6": 5}', 
+        boost_enabled !== undefined ? boost_enabled : true
+      ]
     );
     const course = result.rows[0];
     
-    // Asynchronous Broadcast
     notifyAllStudents(
       'New Course Launch! 🚀',
-      `The new ${course.name} course is now live. Enroll your referrals today and earn a ${course.commission_percent}% commission on every successful enrollment!`,
+      `The new ${course.name} course is now live. Enroll today and start earning!`,
       'course_launch',
       '/dashboard/student'
     ).catch(e => console.error('Broadcast failed:', e));
@@ -86,54 +117,37 @@ const createCourse = async (req, res) => {
 // PUT /api/courses/:id  (Admin)
 const updateCourse = async (req, res) => {
   const { id } = req.params;
-  const { name, category, description, duration_months, fee, commission_percent, commission_ic, is_active } = req.body;
+  const { 
+    name, category, description, duration_months, fee, points, 
+    cap_percent, level_distribution, boost_enabled, is_active 
+  } = req.body;
   const { role, centre_id } = req.user;
 
   try {
-    // Security check: Only super_admin or centre's admin can update
-    const courseCheck = await pool.query('SELECT centre_id, fee, commission_percent, commission_ic FROM courses WHERE id = $1', [id]);
+    const courseCheck = await pool.query('SELECT centre_id FROM courses WHERE id = $1', [id]);
     if (courseCheck.rows.length === 0) return res.status(404).json({ success: false, message: 'Course not found.' });
     
     if (role !== 'super_admin' && courseCheck.rows[0].centre_id !== centre_id) {
-      return res.status(403).json({ success: false, message: 'You do not have permission to edit this course.' });
+      return res.status(403).json({ success: false, message: 'Unauthorized' });
     }
 
-    const oldCourse = courseCheck.rows[0];
+    const error = validateCourseData(req.body);
+    if (error) return res.status(400).json({ success: false, message: error });
+
     const result = await pool.query(
       `UPDATE courses
-       SET name=$1, category=$2, description=$3, duration_months=$4,
-           fee=$5, commission_percent=$6, commission_ic=$7, is_active=$8, updated_at=NOW()
-       WHERE id=$9 RETURNING *`,
-      [name, category || 'computer', description, duration_months, fee, commission_percent, commission_ic, is_active !== undefined ? is_active : true, id]
+       SET name=$1, category=$2, description=$3, duration_months=$4, fee=$5, 
+           points=$6, cap_percent=$7, level_distribution=$8, boost_enabled=$9, 
+           is_active=$10, updated_at=NOW()
+       WHERE id=$11 RETURNING *`,
+      [
+        name, category, description, duration_months, fee, points, 
+        cap_percent, level_distribution, boost_enabled, 
+        is_active !== undefined ? is_active : true, id
+      ]
     );
-    const updatedCourse = result.rows[0];
 
-    // Check for significant updates (Commission increase or Fee change)
-    const commChanged = parseFloat(oldCourse.commission_percent) !== parseFloat(updatedCourse.commission_percent);
-    const feeChanged = parseFloat(oldCourse.fee) !== parseFloat(updatedCourse.fee);
-
-    if (commChanged || feeChanged) {
-        let title = 'Course Update Alert! 📢';
-        let msg = `We've updated the ${updatedCourse.name} course. Check out the new details in your dashboard!`;
-
-        if (commChanged) {
-          const isHigher = parseFloat(updatedCourse.commission_percent) > parseFloat(oldCourse.commission_percent);
-          title = isHigher ? 'Higher Commission Alert! 💰' : 'Course Update: Revised Commission 🏷️';
-          msg = isHigher 
-            ? `Great news! we've increased the commission for ${updatedCourse.name}. You can now earn a higher rate of ${updatedCourse.commission_percent}%!`
-            : `The commission for ${updatedCourse.name} has been updated to ${updatedCourse.commission_percent}%. Start referring today!`;
-        } else if (feeChanged) {
-          const isLower = parseFloat(updatedCourse.fee) < parseFloat(oldCourse.fee);
-          title = isLower ? 'Price Dropped! 📉' : 'Course Pricing Updated! 🏷️';
-          msg = isLower
-            ? `Good news! The ${updatedCourse.name} course is now more affordable at ₹${parseFloat(updatedCourse.fee).toLocaleString()}. It's easier than ever to refer students!`
-            : `The pricing for ${updatedCourse.name} has been updated to ₹${parseFloat(updatedCourse.fee).toLocaleString()}. Check it out now!`;
-        }
-
-        notifyAllStudents(title, msg, 'course_update', '/dashboard/student').catch(e => console.error('Broadcast failed:', e));
-    }
-
-    return res.json({ success: true, data: updatedCourse });
+    return res.json({ success: true, data: result.rows[0] });
   } catch (err) {
     console.error('Update course error:', err);
     return res.status(500).json({ success: false, message: 'Failed to update course.' });
@@ -146,24 +160,20 @@ const deleteCourse = async (req, res) => {
   const { role, centre_id } = req.user;
 
   try {
-    // Security check
     const courseCheck = await pool.query('SELECT centre_id FROM courses WHERE id = $1', [id]);
     if (courseCheck.rows.length === 0) return res.status(404).json({ success: false, message: 'Course not found.' });
     
     if (role !== 'super_admin' && courseCheck.rows[0].centre_id !== centre_id) {
-      return res.status(403).json({ success: false, message: 'You do not have permission to delete this course.' });
+      return res.status(403).json({ success: false, message: 'Unauthorized' });
     }
 
-    // Check if any admissions reference this course
     const admCheck = await pool.query(`SELECT COUNT(*) FROM admissions WHERE course_id = $1`, [id]);
     if (parseInt(admCheck.rows[0].count) > 0) {
-      // Soft-delete (deactivate) if admissions exist
       await pool.query(`UPDATE courses SET is_active = FALSE, updated_at = NOW() WHERE id = $1`, [id]);
-      return res.json({ success: true, message: 'Course deactivated (historical admissions exist, cannot permanently delete).' });
+      return res.json({ success: true, message: 'Course deactivated.' });
     }
-    // Permanent delete if no admissions
-    const result = await pool.query(`DELETE FROM courses WHERE id = $1 RETURNING id`, [id]);
-    return res.json({ success: true, message: 'Course permanently deleted.' });
+    await pool.query(`DELETE FROM courses WHERE id = $1`, [id]);
+    return res.json({ success: true, message: 'Course deleted.' });
   } catch (err) {
     console.error('Delete course error:', err);
     return res.status(500).json({ success: false, message: 'Failed to delete course.' });
