@@ -136,8 +136,6 @@ const deleteAccount = async (req, res) => {
 
     // Check balance
     const walletRes = await pool.query('SELECT total_rupees FROM points_wallet WHERE user_id = $1', [userId]);
-    // Check balance
-    const walletRes = await pool.query('SELECT total_rupees FROM points_wallet WHERE user_id = $1', [userId]);
     if (walletRes.rows[0]?.total_rupees > 0) {
       return res.status(400).json({ success: false, message: 'Cannot deactivate account with remaining balance. Please withdraw first.' });
     }

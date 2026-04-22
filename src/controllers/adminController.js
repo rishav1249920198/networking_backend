@@ -152,6 +152,10 @@ const getDailySummary = async (req, res) => {
     });
   } catch (err) {
     console.error('Daily summary error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch daily summary.' });
+  }
+};
+
 // GET /api/admin/export/users
 const exportUsersCSV = async (req, res) => {
   try {
