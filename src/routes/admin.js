@@ -9,7 +9,7 @@ const AdminController = require('../controllers/adminController');
 const monitorAuth = require('../middleware/monitorAuth');
 
 // GET /api/admin/stats
-router.get('/stats', authenticate, requireRole('super_admin', 'admin', 'co-admin'), async (req, res) => {
+router.get('/stats', authenticate, requireRole('super_admin', 'centre_admin', 'co-admin'), async (req, res) => {
   try {
     const data = await DashboardService.getAdminStats(req.user);
     return res.json({
@@ -24,7 +24,7 @@ router.get('/stats', authenticate, requireRole('super_admin', 'admin', 'co-admin
 
 
 // GET /api/admin/reports
-router.get('/reports', authenticate, requireRole('super_admin', 'admin'), async (req, res) => {
+router.get('/reports', authenticate, requireRole('super_admin', 'centre_admin'), async (req, res) => {
   try {
     const [topEarners, dailyPoints] = await Promise.all([
       pool.query(`
@@ -61,13 +61,13 @@ router.get('/fraud/alerts', monitorAuth, AdminController.getFraudAlerts);
 router.get('/summary', monitorAuth, AdminController.getDailySummary);
 
 // GET /api/admin/insights/forecast
-router.get('/insights/forecast', authenticate, requireRole('super_admin', 'admin'), AdminController.getForecastInsights);
+router.get('/insights/forecast', authenticate, requireRole('super_admin', 'centre_admin', 'co-admin'), AdminController.getForecastInsights);
 
 // GET /api/admin/export/users
-router.get('/export/users', authenticate, requireRole('super_admin', 'admin'), AdminController.exportUsersCSV);
+router.get('/export/users', authenticate, requireRole('super_admin', 'centre_admin'), AdminController.exportUsersCSV);
 
 // POST /api/admin/tree/retry/:userId
-router.post('/tree/retry/:userId', authenticate, requireRole('super_admin', 'admin'), async (req, res) => {
+router.post('/tree/retry/:userId', authenticate, requireRole('super_admin', 'centre_admin'), async (req, res) => {
   const { userId } = req.params;
   const TreeEngine = require('../services/treeEngine');
   
@@ -90,7 +90,7 @@ router.post('/tree/retry/:userId', authenticate, requireRole('super_admin', 'adm
  * GET /api/admin/tree/pending
 ... (standard routes preserved)
  */
-router.get('/tree/pending', authenticate, requireRole('super_admin', 'admin'), async (req, res) => {
+router.get('/tree/pending', authenticate, requireRole('super_admin', 'centre_admin'), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, full_name, email, mobile, system_id, placement_attempts, created_at 
@@ -104,7 +104,7 @@ router.get('/tree/pending', authenticate, requireRole('super_admin', 'admin'), a
   }
 });
 
-router.get('/tree/failed', authenticate, requireRole('super_admin', 'admin'), async (req, res) => {
+router.get('/tree/failed', authenticate, requireRole('super_admin', 'centre_admin'), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, full_name, email, mobile, system_id, placement_attempts, created_at 
