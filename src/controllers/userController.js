@@ -276,11 +276,41 @@ const updateUserRole = async (req, res) => {
 // DELETE /api/users/:id (Admin Only)
 const deleteUser = async (req, res) => {
   const { id } = req.params;
+  const client = await pool.connect();
   try {
-    await pool.query('DELETE FROM users WHERE id = $1', [id]);
-    return res.json({ success: true, message: 'User deleted' });
+    // Prevent deleting yourself
+    if (req.user.id === id) {
+      return res.status(400).json({ success: false, message: 'Cannot delete your own account.' });
+    }
+
+    await client.query('BEGIN');
+
+    // Delete in dependency order to avoid FK constraint errors
+    await client.query('DELETE FROM points_transactions WHERE user_id = $1', [id]);
+    await client.query('DELETE FROM points_wallet WHERE user_id = $1', [id]);
+    await client.query('DELETE FROM withdrawal_requests WHERE student_id = $1', [id]);
+    await client.query('DELETE FROM commissions WHERE user_id = $1 OR source_user_id = $1', [id]);
+    await client.query('DELETE FROM admissions WHERE student_id = $1', [id]);
+    await client.query('DELETE FROM notifications WHERE user_id = $1', [id]);
+
+    // Detach referral chain — set referred_by to null for users they referred
+    await client.query('UPDATE users SET referred_by = NULL WHERE referred_by = $1', [id]);
+
+    // Finally delete the user
+    const result = await client.query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
+    if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'User deleted successfully.' });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to delete user' });
+    await client.query('ROLLBACK');
+    console.error('deleteUser error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to delete user: ' + err.message });
+  } finally {
+    client.release();
   }
 };
 
